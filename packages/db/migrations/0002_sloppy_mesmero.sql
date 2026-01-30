@@ -1,0 +1,1 @@
+ALTER TABLE "ai_chatbot"."FileUpload" ALTER COLUMN "chatId" DROP NOT NULL;
