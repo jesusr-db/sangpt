@@ -1,4 +1,5 @@
 import type { ProcessedFile } from './file-processor';
+import { FileProcessor, type FileContentPart } from './file-processor';
 import { SessionMemory } from './session-memory';
 
 export interface ProjectContext {
@@ -35,7 +36,7 @@ export class ProjectSessionMemory extends SessionMemory {
     // Get project files and add them to the chat's context
     const projectContext = this.projectContexts.get(projectId);
     if (projectContext) {
-      for (const [fileId, file] of projectContext.files) {
+      for (const [_fileId, _file] of projectContext.files) {
         // Note: We don't actually add project files to the chat session,
         // but we make them available through getContextString
         // This prevents duplication and maintains single source of truth
@@ -136,7 +137,7 @@ export class ProjectSessionMemory extends SessionMemory {
   /**
    * Get context string for a chat, including inherited project context
    */
-  override getContextString(chatId: string, maxFiles: number = 10): string {
+  override getContextString(chatId: string, maxFiles = 10): string {
     const contextParts: string[] = [];
 
     // Get project context if chat belongs to a project
@@ -175,6 +176,32 @@ export class ProjectSessionMemory extends SessionMemory {
   }
 
   /**
+   * Get all files for a chat as AI SDK content parts (for multimodal models).
+   * Returns both project files and chat-specific files as content parts.
+   * Images are returned as image parts, other files as text parts.
+   */
+  getFilesAsContentParts(chatId: string): FileContentPart[] {
+    const contentParts: FileContentPart[] = [];
+
+    // Get project files if chat belongs to a project
+    const projectId = this.chatToProject.get(chatId);
+    if (projectId) {
+      const projectFiles = this.getProjectFiles(projectId);
+      for (const file of projectFiles) {
+        contentParts.push(...FileProcessor.toContentParts(file));
+      }
+    }
+
+    // Get chat-specific files
+    const chatFiles = this.getSessionFiles(chatId);
+    for (const sf of chatFiles) {
+      contentParts.push(...FileProcessor.toContentParts(sf.file));
+    }
+
+    return contentParts;
+  }
+
+  /**
    * Format a file for context inclusion
    */
   private formatFileForContext(file: ProcessedFile): string {
@@ -188,7 +215,7 @@ export class ProjectSessionMemory extends SessionMemory {
       const maxContentLength = 5000;
       let content = file.extractedContent;
       if (content.length > maxContentLength) {
-        content = content.substring(0, maxContentLength) + '...[truncated]';
+        content = `${content.substring(0, maxContentLength)}...[truncated]`;
       }
       parts.push(`Content:\n${content}`);
     }

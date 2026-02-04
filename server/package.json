@@ -21,7 +21,7 @@
     "express-fileupload": "^1.5.2",
     "mammoth": "^1.11.0",
     "multer": "^2.0.2",
-    "pdf-parse": "^2.4.5",
+    "pdf-parse": "^1.1.4",
     "zod": "^4.3.5"
   },
   "devDependencies": {

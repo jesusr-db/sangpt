@@ -1,4 +1,4 @@
-import { type RequestHandler, Router } from 'express';
+import { Router } from 'express';
 import { z } from 'zod';
 import { ChatSDKError } from '@chat-template/core/errors';
 import { generateUUID } from '@chat-template/core';
@@ -27,7 +27,7 @@ import type { RouterType } from '../routes/types';
 import fileUpload from 'express-fileupload';
 import { FileProcessor } from '../services/file-processor';
 import { ProjectSessionMemory } from '../services/project-session-memory';
-import * as os from 'os';
+import * as os from 'node:os';
 
 // Schema validation
 const createProjectSchema = z.object({
@@ -77,7 +77,7 @@ const sessionMemory = ProjectSessionMemory.getInstance();
 projectsRouter.post('/', requireAuth, async (req, res) => {
   try {
     const validatedData = createProjectSchema.parse(req.body);
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
 
     const project = await createProject({
       userId,
@@ -103,10 +103,10 @@ projectsRouter.post('/', requireAuth, async (req, res) => {
 // Get all projects for the current user
 projectsRouter.get('/', requireAuth, async (req, res) => {
   try {
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
     const projects = await getProjectsByUserId({ userId });
     res.json(projects);
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Failed to fetch projects' });
   }
 });
@@ -114,7 +114,7 @@ projectsRouter.get('/', requireAuth, async (req, res) => {
 // Get a specific project
 projectsRouter.get('/:id', requireAuth, async (req, res) => {
   try {
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
     const project = await getProjectById({ id: req.params.id, userId });
 
     if (!project) {
@@ -135,7 +135,7 @@ projectsRouter.get('/:id', requireAuth, async (req, res) => {
 projectsRouter.patch('/:id', requireAuth, async (req, res) => {
   try {
     const validatedData = updateProjectSchema.parse(req.body);
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
 
     const project = await updateProject({
       id: req.params.id,
@@ -162,7 +162,7 @@ projectsRouter.patch('/:id', requireAuth, async (req, res) => {
 // Delete a project
 projectsRouter.delete('/:id', requireAuth, async (req, res) => {
   try {
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
     const success = await deleteProject({ id: req.params.id, userId });
 
     if (!success) {
@@ -182,7 +182,7 @@ projectsRouter.delete('/:id', requireAuth, async (req, res) => {
 // Add chat to project
 projectsRouter.post('/:id/chats/:chatId', requireAuth, async (req, res) => {
   try {
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
     const { id: projectId, chatId } = req.params;
 
     // Verify user owns both the project and the chat
@@ -215,7 +215,7 @@ projectsRouter.post('/:id/chats/:chatId', requireAuth, async (req, res) => {
 // Remove chat from project
 projectsRouter.delete('/:id/chats/:chatId', requireAuth, async (req, res) => {
   try {
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
     const { chatId } = req.params;
 
     const success = await removeChatFromProject({ chatId, userId });
@@ -224,7 +224,7 @@ projectsRouter.delete('/:id/chats/:chatId', requireAuth, async (req, res) => {
     }
 
     res.status(204).send();
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Failed to remove chat from project' });
   }
 });
@@ -232,10 +232,10 @@ projectsRouter.delete('/:id/chats/:chatId', requireAuth, async (req, res) => {
 // Get all chats in a project
 projectsRouter.get('/:id/chats', requireAuth, async (req, res) => {
   try {
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
     const chats = await getChatsByProjectId({ projectId: req.params.id, userId });
     res.json(chats);
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Failed to fetch project chats' });
   }
 });
@@ -243,7 +243,7 @@ projectsRouter.get('/:id/chats', requireAuth, async (req, res) => {
 // Add file to project
 projectsRouter.post('/:id/files', requireAuth, async (req, res) => {
   try {
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
     const { id: projectId } = req.params;
     const { fileId } = req.body;
 
@@ -272,7 +272,7 @@ projectsRouter.get('/:id/files', requireAuth, async (req, res) => {
   try {
     const files = await getProjectFiles({ projectId: req.params.id });
     res.json(files);
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Failed to fetch project files' });
   }
 });
@@ -291,7 +291,7 @@ projectsRouter.delete('/:id/files/:fileId', requireAuth, async (req, res) => {
     sessionMemory.removeProjectFile(projectId, fileId);
 
     res.status(204).send();
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Failed to remove file from project' });
   }
 });
@@ -300,7 +300,7 @@ projectsRouter.delete('/:id/files/:fileId', requireAuth, async (req, res) => {
 projectsRouter.post('/:id/upload', requireAuth, async (req, res) => {
   try {
     const { id: projectId } = req.params;
-    const userId = req.session!.user.id;
+    const userId = req.session?.user.id;
 
     // Verify project exists and user has access
     const project = await getProjectById(projectId);
@@ -334,9 +334,9 @@ projectsRouter.post('/:id/upload', requireAuth, async (req, res) => {
         const fileId = generateUUID();
 
         // Save to database if available
-        let savedFile = null;
+        let _savedFile = null;
         if (isDatabaseAvailable()) {
-          savedFile = await saveFileUpload({
+          _savedFile = await saveFileUpload({
             id: fileId,
             filename: file.name,
             contentType: file.mimetype,
@@ -374,7 +374,7 @@ projectsRouter.post('/:id/upload', requireAuth, async (req, res) => {
         // Clean up temp file
         if (tempPath) {
           try {
-            const fs = await import('fs/promises');
+            const fs = await import('node:fs/promises');
             await fs.unlink(tempPath);
           } catch (err) {
             console.warn('Failed to clean up temp file:', err);
@@ -437,7 +437,7 @@ projectsRouter.get('/:id/context', requireAuth, async (req, res) => {
   try {
     const contexts = await getProjectContexts({ projectId: req.params.id });
     res.json(contexts);
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Failed to fetch project contexts' });
   }
 });
@@ -480,7 +480,7 @@ projectsRouter.delete('/:id/context/:contextId', requireAuth, async (req, res) =
     }
 
     res.status(204).send();
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({ error: 'Failed to delete context' });
   }
 });

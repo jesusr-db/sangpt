@@ -6,7 +6,8 @@ export default defineConfig({
   target: 'node22',
   unbundle: false,
   // Explicitly mark what should be external (everything except workspace packages)
-  external: [/^express/, /^cors/, /^dotenv/, /^zod/, /^ai/],
+  // pdf-parse and mammoth are CommonJS modules that must not be bundled
+  external: [/^express/, /^cors/, /^dotenv/, /^zod/, /^ai/, /^pdf-parse/, /^mammoth/],
   // Force workspace packages to be bundled
   noExternal: [/@chat-template\/.*/],
   dts: false,

@@ -25,7 +25,7 @@ export function ModelSelector({
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <label htmlFor="model-select" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+      <label htmlFor="model-select" className='font-medium text-gray-700 text-sm dark:text-gray-300'>
         Model:
       </label>
       <Select
@@ -41,7 +41,7 @@ export function ModelSelector({
             <SelectItem key={modelId} value={modelId}>
               <div className="flex flex-col">
                 <span className="font-medium">{capabilities.name}</span>
-                <span className="text-xs text-gray-500 dark:text-gray-400">
+                <span className='text-gray-500 text-xs dark:text-gray-400'>
                   {capabilities.maxTokens.toLocaleString()} tokens
                   {capabilities.supportsVision && ' • Vision'}
                   {capabilities.supportsTools && ' • Tools'}
@@ -63,19 +63,19 @@ export function ModelCapabilities({ modelId }: { modelId: string }) {
   }
 
   return (
-    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+    <div className='mt-1 text-gray-500 text-xs dark:text-gray-400'>
       <p>{capabilities.description}</p>
-      <div className="flex gap-2 mt-1">
-        <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">
+      <div className='mt-1 flex gap-2'>
+        <span className='rounded bg-gray-100 px-2 py-0.5 dark:bg-gray-800'>
           {capabilities.maxTokens.toLocaleString()} tokens
         </span>
         {capabilities.supportsVision && (
-          <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900 rounded">
+          <span className='rounded bg-blue-100 px-2 py-0.5 dark:bg-blue-900'>
             Vision
           </span>
         )}
         {capabilities.supportsTools && (
-          <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900 rounded">
+          <span className='rounded bg-green-100 px-2 py-0.5 dark:bg-green-900'>
             Tools
           </span>
         )}

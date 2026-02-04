@@ -51,7 +51,7 @@ export function FileUploadArea({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const validateFile = (file: File): string | null => {
-    const extension = '.' + file.name.split('.').pop()?.toLowerCase();
+    const extension = `.${file.name.split('.').pop()?.toLowerCase()}`;
     if (!ALLOWED_EXTENSIONS.includes(extension)) {
       return `File type ${extension} is not supported. Allowed types: ${ALLOWED_EXTENSIONS.join(', ')}`;
     }
@@ -132,7 +132,7 @@ export function FileUploadArea({
     setIsDragging(false);
   }, []);
 
-  const getFileIcon = (filename: string) => {
+  const _getFileIcon = (filename: string) => {
     const ext = filename.split('.').pop()?.toLowerCase();
     if (['jpg', 'jpeg', 'png'].includes(ext || '')) {
       return <Image className="h-4 w-4" />;
@@ -150,7 +150,7 @@ export function FileUploadArea({
         isDragging
           ? 'border-blue-500 bg-blue-50 dark:bg-blue-950'
           : 'border-gray-300 dark:border-gray-700',
-        disabled && 'opacity-50 cursor-not-allowed',
+        disabled && 'cursor-not-allowed opacity-50',
         className
       )}
       onDrop={handleDrop}
@@ -174,7 +174,7 @@ export function FileUploadArea({
           <Upload className="h-8 w-8 text-gray-400" />
         )}
 
-        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p className='mt-2 text-gray-600 text-sm dark:text-gray-400'>
           {isUploading
             ? 'Uploading...'
             : isDragging
@@ -194,7 +194,7 @@ export function FileUploadArea({
           </Button>
         )}
 
-        <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
+        <p className='mt-2 text-gray-500 text-xs dark:text-gray-500'>
           Supported: {ALLOWED_EXTENSIONS.join(', ')} (max {MAX_FILE_SIZE / 1024 / 1024}MB)
         </p>
       </div>
@@ -223,16 +223,16 @@ export function FileChip({
   };
 
   const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   return (
     <div
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs',
-        'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300',
+        'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
         onClick && 'cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700'
       )}
       onClick={onClick}
@@ -248,7 +248,7 @@ export function FileChip({
             e.stopPropagation();
             onRemove();
           }}
-          className="ml-1 hover:text-red-500 transition-colors"
+          className='ml-1 transition-colors hover:text-red-500'
         >
           <X className="h-3 w-3" />
         </button>

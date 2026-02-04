@@ -1,1 +1,0 @@
-import"./chunk-FPAJGGOC-DD6GeKws.js";import"./isArrayLikeObject-HUOpmrfr.js";import"./_baseUniq-DNTxl4sa.js";import"./_basePickBy--XlAW08B.js";import"./isEmpty-CswwdRV7.js";import"./clone-C11tOrgO.js";import{n as e,t}from"./chunk-O7ZBX7Z2-C3_cKfrz.js";export{t as ArchitectureModule,e as createArchitectureServices};

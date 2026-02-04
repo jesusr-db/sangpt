@@ -469,6 +469,12 @@ export async function saveFileUpload({
   storagePath,
   extractedContent,
   metadata,
+  volumePath,
+  volumeCatalog,
+  volumeSchema,
+  volumeName,
+  storageType,
+  fileChecksum,
 }: {
   id: string;
   chatId?: string | null; // Made optional for session-only files
@@ -479,6 +485,13 @@ export async function saveFileUpload({
   storagePath?: string;
   extractedContent?: string;
   metadata?: Record<string, any>;
+  // Volume storage fields
+  volumePath?: string;
+  volumeCatalog?: string;
+  volumeSchema?: string;
+  volumeName?: string;
+  storageType?: 'volume' | 'memory';
+  fileChecksum?: string;
 }) {
   if (!isDatabaseAvailable()) {
     console.log('[saveFileUpload] Database not available, skipping save');
@@ -499,6 +512,13 @@ export async function saveFileUpload({
         extractedContent: extractedContent || null,
         metadata: metadata || {},
         createdAt: new Date(),
+        // Volume storage fields
+        volumePath: volumePath || null,
+        volumeCatalog: volumeCatalog || null,
+        volumeSchema: volumeSchema || null,
+        volumeName: volumeName || null,
+        storageType: storageType || 'memory',
+        fileChecksum: fileChecksum || null,
       })
       .returning();
 
@@ -528,6 +548,29 @@ export async function getFileUploadsByChatId({
   } catch (error) {
     console.error('Failed to get file uploads:', error);
     return [];
+  }
+}
+
+export async function getFileUploadById({
+  id,
+}: {
+  id: string;
+}): Promise<FileUpload | null> {
+  if (!isDatabaseAvailable()) {
+    console.log('[getFileUploadById] Database not available, returning null');
+    return null;
+  }
+
+  try {
+    const [result] = await (await ensureDb())
+      .select()
+      .from(fileUpload)
+      .where(eq(fileUpload.id, id));
+
+    return result || null;
+  } catch (error) {
+    console.error('Failed to get file upload:', error);
+    return null;
   }
 }
 
@@ -753,7 +796,7 @@ export async function deleteProject({
   }
 
   try {
-    const result = await (await ensureDb())
+    const _result = await (await ensureDb())
       .delete(project)
       .where(and(eq(project.id, id), eq(project.userId, userId)));
 

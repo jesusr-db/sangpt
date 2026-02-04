@@ -103,7 +103,7 @@ export function SidebarProjects({ user }: { user?: any }) {
     return (
       <SidebarGroup>
         <SidebarGroupContent>
-          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-red-500">
+          <div className='flex w-full flex-row items-center justify-center gap-2 px-2 text-red-500 text-sm'>
             Failed to load projects
           </div>
         </SidebarGroupContent>

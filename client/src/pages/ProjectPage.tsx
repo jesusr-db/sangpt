@@ -113,14 +113,14 @@ export default function ProjectPage() {
 
   if (!project) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className='flex h-full items-center justify-center'>
         <div className="text-muted-foreground">Loading project...</div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className='flex h-full flex-col'>
       {/* Header */}
       <div className="border-b p-4">
         <div className="flex items-center justify-between">
@@ -141,7 +141,7 @@ export default function ProjectPage() {
                   style={{ color: project.color || undefined }}
                 />
               )}
-              <h1 className="text-xl font-semibold">{project.name}</h1>
+              <h1 className='font-semibold text-xl'>{project.name}</h1>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -186,7 +186,7 @@ export default function ProjectPage() {
             <ProjectChats projectId={id!} />
           </TabsContent>
 
-          <TabsContent value="context" className="p-4 space-y-4">
+          <TabsContent value="context" className='space-y-4 p-4'>
             <div>
               <h3 className="mb-2 font-semibold">Project Instructions</h3>
               <p className="mb-4 text-muted-foreground text-sm">

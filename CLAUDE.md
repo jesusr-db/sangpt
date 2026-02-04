@@ -12,6 +12,38 @@ This is a production-ready, full-stack chatbot application built specifically fo
 - Vercel AI SDK for streaming responses
 - Databricks-native authentication and deployment
 
+## Available Tools
+
+You have access to Databricks MCP tools prefixed with `mcp__databricks__`. Use `/mcp` to see the list of available tools.
+
+### Skills
+
+Load skills for detailed guidance:
+- `skill: "agent-bricks"` - Knowledge Assistants, Genie Spaces, Multi-Agent Supervisors
+- `skill: "aibi-dashboards"` - AI/BI Dashboards
+- `skill: "asset-bundles"` - Databricks Asset Bundles
+- `skill: "databricks-app-apx"` - Full-stack apps with APX framework
+- `skill: "databricks-app-python"` - Python apps with Dash, Streamlit, Flask
+- `skill: "databricks-config"` - Profile authentication setup
+- `skill: "databricks-docs"` - Documentation reference
+- `skill: "databricks-jobs"` - Lakeflow Jobs and workflows
+- `skill: "databricks-python-sdk"` - Python SDK patterns
+- `skill: "databricks-unity-catalog"` - System tables for lineage, audit, billing
+- `skill: "mlflow-evaluation"` - MLflow evaluation and trace analysis
+- `skill: "spark-declarative-pipelines"` - Spark Declarative Pipelines
+- `skill: "synthetic-data-generation"` - Test data generation
+- `skill: "unstructured-pdf-generation"` - Generate synthetic PDFs for RAG
+
+### Testing Workflow
+
+1. Start with simple queries to verify MCP connection works
+2. Test individual tools before combining them
+3. Use skills when building pipelines or complex workflows
+
+### Notes
+
+This is a sandbox for testing - feel free to create files, run queries, and experiment.
+
 ## Architecture
 
 ### Monorepo Structure
@@ -459,6 +491,54 @@ test("users should see their own chats", async ({
 });
 ```
 
+## File Storage Architecture
+
+The application uses a tiered storage strategy for file uploads:
+
+### Storage Tiers
+
+1. **Databricks Volume** (Primary) - Original files stored in Unity Catalog Volumes
+   - Path format: `/Volumes/{catalog}/{schema}/{volume}/chats/{chatId}/files/{fileId}/{filename}`
+   - Persistent across restarts
+   - Supports file download
+
+2. **PostgreSQL** (Metadata) - Extracted text and file metadata
+   - `FileUpload` table stores: filename, contentType, fileSize, extractedContent, volumePath
+   - Enables text search within uploaded documents
+   - Stores volume path pointer for downloads
+
+3. **Session Memory** (Fallback) - Ephemeral storage when Volume unavailable
+   - Used when Volume storage is not configured
+   - Files lost on server restart
+
+### Configuration
+
+Volume storage requires these environment variables (auto-set in deployed apps):
+```bash
+VOLUME_CATALOG=main      # Unity Catalog name
+VOLUME_SCHEMA=default    # Schema name
+VOLUME_NAME=chatbot-files-dev-yourname  # Volume name
+```
+
+### File Upload Flow
+
+```
+Client -> POST /api/files/upload
+  1. Read file buffer from temp file
+  2. Process file (extract text content)
+  3. Upload original to Volume (if configured)
+  4. Save metadata + extracted text to PostgreSQL
+  5. Return file info with storageType: 'volume' | 'memory'
+```
+
+### API Endpoints
+
+- `POST /api/files/upload` - Upload file (stores in Volume + DB)
+- `GET /api/files/:chatId` - List files for chat
+- `GET /api/files/:chatId/:fileId/content` - Get extracted text content
+- `GET /api/files/:chatId/:fileId/download` - Download original file from Volume
+- `DELETE /api/files/:chatId/:fileId` - Delete file from all storage
+
 ## Known Limitations & Quirks
 
 ### Database Schema Quirk
@@ -542,6 +622,12 @@ The `databricks.yml` file defines:
    - Resources:
      - Serving endpoint (with CAN_QUERY permission)
      - Database (with CAN_CONNECT_AND_CREATE permission)
+     - Volume (with READ_WRITE permission for file storage)
+
+3. **Unity Catalog Volume** - File storage
+   - Name: `chatbot-files-{suffix}`
+   - Type: MANAGED
+   - Used for persistent file uploads
 
 ### Deployment Targets
 
@@ -584,6 +670,7 @@ resources:
 - `packages/core/src/errors.ts` - Error definitions
 - `packages/ai-sdk-providers/` - Databricks AI provider implementations
 - `scripts/migrate.ts` - Database migration runner (applies SQL migrations from packages/db/migrations/)
+- `server/src/services/volume-storage.ts` - Databricks Volume storage service for file uploads
 
 ### Convenience Scripts
 

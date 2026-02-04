@@ -1,6 +1,14 @@
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import type { FileUpload } from '@chat-template/db';
+import type { ImagePart, TextPart } from 'ai';
+import { createRequire } from 'node:module';
+
+// pdf-parse is a CommonJS module, use createRequire for ESM compatibility
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
+
+export type FileContentPart = ImagePart | TextPart;
 
 export interface ProcessedFile {
   filename: string;
@@ -41,19 +49,19 @@ export class FileProcessor {
     const fileExtension = path.extname(originalName).toLowerCase();
 
     // Validate file extension
-    if (!this.ALLOWED_EXTENSIONS.includes(fileExtension)) {
+    if (!FileProcessor.ALLOWED_EXTENSIONS.includes(fileExtension)) {
       throw new Error(`File type ${fileExtension} is not supported`);
     }
 
     // Get file stats
     const stats = await fs.stat(filePath);
-    if (stats.size > this.MAX_FILE_SIZE) {
-      throw new Error(`File size exceeds maximum allowed size of ${this.MAX_FILE_SIZE / 1024 / 1024}MB`);
+    if (stats.size > FileProcessor.MAX_FILE_SIZE) {
+      throw new Error(`File size exceeds maximum allowed size of ${FileProcessor.MAX_FILE_SIZE / 1024 / 1024}MB`);
     }
 
     // Process based on file type
     let extractedContent = '';
-    let metadata: Record<string, any> = {
+    const metadata: Record<string, any> = {
       extension: fileExtension,
       originalSize: stats.size,
       processedAt: new Date().toISOString(),
@@ -78,48 +86,41 @@ export class FileProcessor {
       // Images
       case '.jpg':
       case '.jpeg':
-      case '.png':
+      case '.png': {
         const imageBuffer = await fs.readFile(filePath);
         base64Content = imageBuffer.toString('base64');
         extractedContent = `[Image: ${originalName}]`;
         metadata.isImage = true;
         metadata.base64Size = base64Content.length;
         break;
+      }
 
       // PDF files
       case '.pdf':
         try {
-          // For now, we'll store PDFs but note that text extraction is not available
-          // This avoids the CommonJS import issues in production
-          extractedContent = `[PDF File: ${originalName}]`;
-          metadata.isPDF = true;
-          metadata.note = 'PDF text extraction is temporarily disabled. File stored successfully.';
+          const pdfBuffer = await fs.readFile(filePath);
+          const pdfData = await pdfParse(pdfBuffer);
 
-          // Optional: Try to extract text if pdf-parse is available
-          try {
-            const pdfBuffer = await fs.readFile(filePath);
-            const pdfParseModule = await import('pdf-parse').catch(() => null);
-            if (pdfParseModule) {
-              const pdfParse = pdfParseModule.default || pdfParseModule;
-              if (typeof pdfParse === 'function') {
-                const pdfData = await pdfParse(pdfBuffer);
-                if (pdfData && pdfData.text) {
-                  extractedContent = pdfData.text;
-                  metadata.pageCount = pdfData.numpages;
-                  metadata.pdfInfo = pdfData.info;
-                  delete metadata.note;
-                }
-              }
-            }
-          } catch (parseError) {
-            // Silently fall back to placeholder content
-            console.log('PDF parsing unavailable, using placeholder content');
+          metadata.isPDF = true;
+          metadata.pageCount = pdfData.numpages;
+          metadata.pdfInfo = pdfData.info;
+
+          // Check if we got meaningful text content
+          const text = pdfData.text?.trim() || '';
+          if (text.length > 0) {
+            extractedContent = text;
+          } else {
+            // PDF has no extractable text (likely scanned/image-based)
+            extractedContent = `[PDF File: ${originalName}]\n\nNote: This PDF appears to be scanned or image-based. No text content could be extracted. The document has ${pdfData.numpages} page(s).`;
+            metadata.isScannedPDF = true;
+            metadata.warning = 'PDF appears to be scanned/image-based with no extractable text';
           }
         } catch (error) {
           console.error('Error processing PDF:', error);
-          extractedContent = `[PDF File: ${originalName} - Content extraction failed]`;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          extractedContent = `[PDF File: ${originalName} - Content extraction failed: ${errorMessage}]`;
           metadata.isPDF = true;
-          metadata.error = 'Content extraction failed';
+          metadata.error = errorMessage;
         }
         break;
 
@@ -135,12 +136,12 @@ export class FileProcessor {
             const mammothModule = await import('mammoth').catch(() => null);
             if (mammothModule) {
               const result = await mammothModule.extractRawText({ path: filePath });
-              if (result && result.value) {
+              if (result?.value) {
                 extractedContent = result.value;
                 metadata.messages = result.messages;
               }
             }
-          } catch (parseError) {
+          } catch (_parseError) {
             // Silently fall back to placeholder content
             console.log('DOCX parsing unavailable, using placeholder content');
             metadata.note = 'Word document text extraction is temporarily disabled. File stored successfully.';
@@ -170,13 +171,13 @@ export class FileProcessor {
   /**
    * Truncate content to fit within token limits
    */
-  static truncateContent(content: string, maxLength: number = 10000): string {
+  static truncateContent(content: string, maxLength = 10000): string {
     if (content.length <= maxLength) {
       return content;
     }
 
     const truncated = content.substring(0, maxLength);
-    return truncated + '\n\n[Content truncated...]';
+    return `${truncated}\n\n[Content truncated...]`;
   }
 
   /**
@@ -186,7 +187,7 @@ export class FileProcessor {
     const filename = 'filename' in file ? file.filename : file.filename;
     const content = 'extractedContent' in file ? file.extractedContent : '';
 
-    return `File: ${filename}\n---\n${this.truncateContent(content)}\n---`;
+    return `File: ${filename}\n---\n${FileProcessor.truncateContent(content)}\n---`;
   }
 
   /**
@@ -195,6 +196,31 @@ export class FileProcessor {
   static isImageFile(filename: string): boolean {
     const ext = path.extname(filename).toLowerCase();
     return ['.jpg', '.jpeg', '.png'].includes(ext);
+  }
+
+  /**
+   * Convert a ProcessedFile to AI SDK content parts for multimodal models.
+   * Images with base64 data are returned as image parts for vision models.
+   * All other files are returned as text parts with their extracted content.
+   */
+  static toContentParts(file: ProcessedFile): FileContentPart[] {
+    // If it's an image with base64 content, return as image part for vision models
+    if (FileProcessor.isImageFile(file.filename) && file.base64Content) {
+      return [
+        {
+          type: 'image',
+          image: `data:${file.contentType};base64,${file.base64Content}`,
+        },
+      ];
+    }
+
+    // For all other files, return as text part with extracted content
+    return [
+      {
+        type: 'text',
+        text: `File: ${file.filename}\n---\n${FileProcessor.truncateContent(file.extractedContent)}\n---`,
+      },
+    ];
   }
 
   /**

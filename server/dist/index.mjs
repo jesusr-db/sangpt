@@ -1,21 +1,23 @@
-import { n as isDatabaseAvailable } from "./connection-pool-CIODZxSg.mjs";
-import "./src-BaHhVWSg.mjs";
-import { r as getAuthSession } from "./src-pe6ovBD5.mjs";
-import { A as updateChatVisiblityById, C as getProjectsByUserId, D as saveFileUpload, E as saveChat, F as ChatSDKError, M as updateProjectContext, N as convertToUIMessages, O as saveMessages, P as generateUUID, S as getProjectFiles, T as removeFileFromProject, _ as getFileUploadsByChatId, a as addChatToProject, b as getProjectById, c as createProject, d as deleteMessagesByChatIdAfterTimestamp, f as deleteProject, g as getChatsByUserId, h as getChatsByProjectId, i as checkChatAccess, j as updateProject, k as updateChatLastContextById, l as deleteChatById, m as getChatById, n as postRequestBodySchema, o as addFileToProject, p as deleteProjectContext, r as StreamCache, s as addProjectContext, t as myProvider, u as deleteFileUpload, v as getMessageById, w as removeChatFromProject, x as getProjectContexts, y as getMessagesByChatId } from "./src-CIuo9GFE.mjs";
+import { n as isDatabaseAvailable } from "./connection-pool-Bhce9fke.mjs";
+import { r as getHostUrl } from "./src-BaHhVWSg.mjs";
+import { i as getCachedCliHost, o as getDatabricksToken, r as getAuthSession, t as getAuthMethod } from "./src-pe6ovBD5.mjs";
+import { A as updateChatLastContextById, C as getProjectFiles, D as saveChat, E as removeFileFromProject, F as generateUUID, I as ChatSDKError, M as updateProject, N as updateProjectContext, O as saveFileUpload, P as convertToUIMessages, S as getProjectContexts, T as removeChatFromProject, _ as getFileUploadById, a as addChatToProject, b as getMessagesByChatId, c as createProject, d as deleteMessagesByChatIdAfterTimestamp, f as deleteProject, g as getChatsByUserId, h as getChatsByProjectId, i as checkChatAccess, j as updateChatVisiblityById, k as saveMessages, l as deleteChatById, m as getChatById, n as postRequestBodySchema, o as addFileToProject, p as deleteProjectContext, r as StreamCache, s as addProjectContext, t as myProvider, u as deleteFileUpload, v as getFileUploadsByChatId, w as getProjectsByUserId, x as getProjectById, y as getMessageById } from "./src-qkQddNH6.mjs";
 import "./src-CqvC4Bjf.mjs";
 import { a as getDefaultFoundationModel, i as FOUNDATION_MODELS } from "./src-BIJIyhE4.mjs";
+import { createRequire } from "node:module";
 import dotenv from "dotenv";
+import * as path$1 from "node:path";
 import path, { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { Router } from "express";
 import cors from "cors";
 import { convertToModelMessages, createUIMessageStream, generateText, pipeUIMessageStreamToResponse, streamText } from "ai";
 import { z } from "zod";
-import * as os$1 from "os";
 import { DATABRICKS_TOOL_CALL_ID, DATABRICKS_TOOL_DEFINITION, extractApprovalStatus } from "@databricks/ai-sdk-provider";
-import * as fs from "fs/promises";
-import * as path$1 from "path";
+import * as fs from "node:fs/promises";
 import fileUpload from "express-fileupload";
+import { createHash } from "node:crypto";
+import * as os from "node:os";
 
 //#region src/env.ts
 const __filename = fileURLToPath(import.meta.url);
@@ -64,7 +66,8 @@ async function requireChatAccess(req, res, next) {
 
 //#endregion
 //#region src/services/file-processor.ts
-var FileProcessor = class {
+const pdfParse = createRequire(import.meta.url)("pdf-parse");
+var FileProcessor = class FileProcessor {
 	static MAX_FILE_SIZE = 10 * 1024 * 1024;
 	static ALLOWED_EXTENSIONS = [
 		".txt",
@@ -87,11 +90,11 @@ var FileProcessor = class {
 	*/
 	static async processFile(filePath, originalName, mimeType) {
 		const fileExtension = path$1.extname(originalName).toLowerCase();
-		if (!this.ALLOWED_EXTENSIONS.includes(fileExtension)) throw new Error(`File type ${fileExtension} is not supported`);
+		if (!FileProcessor.ALLOWED_EXTENSIONS.includes(fileExtension)) throw new Error(`File type ${fileExtension} is not supported`);
 		const stats = await fs.stat(filePath);
-		if (stats.size > this.MAX_FILE_SIZE) throw new Error(`File size exceeds maximum allowed size of ${this.MAX_FILE_SIZE / 1024 / 1024}MB`);
+		if (stats.size > FileProcessor.MAX_FILE_SIZE) throw new Error(`File size exceeds maximum allowed size of ${FileProcessor.MAX_FILE_SIZE / 1024 / 1024}MB`);
 		let extractedContent = "";
-		let metadata = {
+		const metadata = {
 			extension: fileExtension,
 			originalSize: stats.size,
 			processedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -120,32 +123,23 @@ var FileProcessor = class {
 				break;
 			case ".pdf":
 				try {
-					extractedContent = `[PDF File: ${originalName}]`;
+					const pdfData = await pdfParse(await fs.readFile(filePath));
 					metadata.isPDF = true;
-					metadata.note = "PDF text extraction is temporarily disabled. File stored successfully.";
-					try {
-						const pdfBuffer = await fs.readFile(filePath);
-						const pdfParseModule = await import("pdf-parse").catch(() => null);
-						if (pdfParseModule) {
-							const pdfParse = pdfParseModule.default || pdfParseModule;
-							if (typeof pdfParse === "function") {
-								const pdfData = await pdfParse(pdfBuffer);
-								if (pdfData && pdfData.text) {
-									extractedContent = pdfData.text;
-									metadata.pageCount = pdfData.numpages;
-									metadata.pdfInfo = pdfData.info;
-									delete metadata.note;
-								}
-							}
-						}
-					} catch (parseError) {
-						console.log("PDF parsing unavailable, using placeholder content");
+					metadata.pageCount = pdfData.numpages;
+					metadata.pdfInfo = pdfData.info;
+					const text = pdfData.text?.trim() || "";
+					if (text.length > 0) extractedContent = text;
+					else {
+						extractedContent = `[PDF File: ${originalName}]\n\nNote: This PDF appears to be scanned or image-based. No text content could be extracted. The document has ${pdfData.numpages} page(s).`;
+						metadata.isScannedPDF = true;
+						metadata.warning = "PDF appears to be scanned/image-based with no extractable text";
 					}
 				} catch (error) {
 					console.error("Error processing PDF:", error);
-					extractedContent = `[PDF File: ${originalName} - Content extraction failed]`;
+					const errorMessage = error instanceof Error ? error.message : "Unknown error";
+					extractedContent = `[PDF File: ${originalName} - Content extraction failed: ${errorMessage}]`;
 					metadata.isPDF = true;
-					metadata.error = "Content extraction failed";
+					metadata.error = errorMessage;
 				}
 				break;
 			case ".docx":
@@ -156,12 +150,12 @@ var FileProcessor = class {
 						const mammothModule = await import("mammoth").catch(() => null);
 						if (mammothModule) {
 							const result = await mammothModule.extractRawText({ path: filePath });
-							if (result && result.value) {
+							if (result?.value) {
 								extractedContent = result.value;
 								metadata.messages = result.messages;
 							}
 						}
-					} catch (parseError) {
+					} catch (_parseError) {
 						console.log("DOCX parsing unavailable, using placeholder content");
 						metadata.note = "Word document text extraction is temporarily disabled. File stored successfully.";
 					}
@@ -188,7 +182,7 @@ var FileProcessor = class {
 	*/
 	static truncateContent(content, maxLength = 1e4) {
 		if (content.length <= maxLength) return content;
-		return content.substring(0, maxLength) + "\n\n[Content truncated...]";
+		return `${content.substring(0, maxLength)}\n\n[Content truncated...]`;
 	}
 	/**
 	* Prepare file content for inclusion in chat context
@@ -196,7 +190,7 @@ var FileProcessor = class {
 	static formatForContext(file) {
 		const filename = "filename" in file ? file.filename : file.filename;
 		const content = "extractedContent" in file ? file.extractedContent : "";
-		return `File: ${filename}\n---\n${this.truncateContent(content)}\n---`;
+		return `File: ${filename}\n---\n${FileProcessor.truncateContent(content)}\n---`;
 	}
 	/**
 	* Check if file type supports vision models
@@ -208,6 +202,21 @@ var FileProcessor = class {
 			".jpeg",
 			".png"
 		].includes(ext);
+	}
+	/**
+	* Convert a ProcessedFile to AI SDK content parts for multimodal models.
+	* Images with base64 data are returned as image parts for vision models.
+	* All other files are returned as text parts with their extracted content.
+	*/
+	static toContentParts(file) {
+		if (FileProcessor.isImageFile(file.filename) && file.base64Content) return [{
+			type: "image",
+			image: `data:${file.contentType};base64,${file.base64Content}`
+		}];
+		return [{
+			type: "text",
+			text: `File: ${file.filename}\n---\n${FileProcessor.truncateContent(file.extractedContent)}\n---`
+		}];
 	}
 	/**
 	* Clean up temporary file
@@ -389,7 +398,7 @@ var ProjectSessionMemory = class ProjectSessionMemory extends SessionMemory {
 	initializeChatWithProject(chatId, projectId) {
 		this.chatToProject.set(chatId, projectId);
 		const projectContext = this.projectContexts.get(projectId);
-		if (projectContext) for (const [fileId, file] of projectContext.files);
+		if (projectContext) for (const [_fileId, _file] of projectContext.files);
 	}
 	/**
 	* Add a file to a project (shared across all project chats)
@@ -485,6 +494,22 @@ var ProjectSessionMemory = class ProjectSessionMemory extends SessionMemory {
 		return contextParts.join("\n\n");
 	}
 	/**
+	* Get all files for a chat as AI SDK content parts (for multimodal models).
+	* Returns both project files and chat-specific files as content parts.
+	* Images are returned as image parts, other files as text parts.
+	*/
+	getFilesAsContentParts(chatId) {
+		const contentParts = [];
+		const projectId = this.chatToProject.get(chatId);
+		if (projectId) {
+			const projectFiles = this.getProjectFiles(projectId);
+			for (const file of projectFiles) contentParts.push(...FileProcessor.toContentParts(file));
+		}
+		const chatFiles = this.getSessionFiles(chatId);
+		for (const sf of chatFiles) contentParts.push(...FileProcessor.toContentParts(sf.file));
+		return contentParts;
+	}
+	/**
 	* Format a file for context inclusion
 	*/
 	formatFileForContext(file) {
@@ -495,7 +520,7 @@ var ProjectSessionMemory = class ProjectSessionMemory extends SessionMemory {
 		if (file.extractedContent) {
 			const maxContentLength = 5e3;
 			let content = file.extractedContent;
-			if (content.length > maxContentLength) content = content.substring(0, maxContentLength) + "...[truncated]";
+			if (content.length > maxContentLength) content = `${content.substring(0, maxContentLength)}...[truncated]`;
 			parts.push(`Content:\n${content}`);
 		}
 		return parts.join("\n");
@@ -666,11 +691,15 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 			role: "system",
 			content: `Project Context and Instructions:\n\n${projectContext}`
 		});
+		const fileContentParts = sessionMemory$2.getFilesAsContentParts(id);
+		const imageContentParts = fileContentParts.filter((p) => p.type === "image");
+		fileContentParts.filter((p) => p.type === "text");
+		const hasImages = imageContentParts.length > 0;
 		const allFileContext = sessionMemory$2.getContextString(id);
 		if (allFileContext || projectFileContext) {
 			let fileMessage = "You have access to the following files:\n\n";
-			if (projectFileContext) fileMessage += "Project Files:\n" + projectFileContext + "\n\n";
-			if (allFileContext) fileMessage += "Chat Files:\n" + allFileContext;
+			if (projectFileContext) fileMessage += `Project Files:\n${projectFileContext}\n\n`;
+			if (allFileContext) fileMessage += `Chat Files:\n${allFileContext}`;
 			fileMessage += "\n\nYou can reference these files by name when responding to user queries.";
 			systemMessages.push({
 				role: "system",
@@ -678,6 +707,22 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 			});
 		}
 		if (systemMessages.length > 0) messagesForModel = [...systemMessages, ...messagesForModel];
+		if (hasImages) {
+			const lastUserMsgIndex = messagesForModel.findLastIndex((m) => m.role === "user");
+			if (lastUserMsgIndex !== -1) {
+				const lastUserMsg = messagesForModel[lastUserMsgIndex];
+				const currentContent = lastUserMsg.content;
+				const existingContent = typeof currentContent === "string" ? [{
+					type: "text",
+					text: currentContent
+				}] : Array.isArray(currentContent) ? currentContent : [];
+				messagesForModel[lastUserMsgIndex] = {
+					...lastUserMsg,
+					content: [...imageContentParts, ...existingContent]
+				};
+				console.log(`[Chat] Injected ${imageContentParts.length} image(s) into user message for vision model`);
+			}
+		}
 		const result = streamText({
 			model: await myProvider.languageModel(selectedChatModel),
 			messages: messagesForModel,
@@ -969,21 +1014,198 @@ configRouter.get("/", (_req, res) => {
 });
 
 //#endregion
+//#region src/services/volume-storage.ts
+/**
+* Databricks Volume Storage Service
+*
+* Handles file storage in Databricks Unity Catalog Volumes using the Files API.
+* Volumes provide persistent, scalable storage for chat file attachments.
+*/
+/**
+* Get volume configuration from environment variables
+*/
+function getVolumeConfig() {
+	const catalog = process.env.VOLUME_CATALOG;
+	const schema = process.env.VOLUME_SCHEMA;
+	const volume = process.env.VOLUME_NAME;
+	if (!catalog || !schema || !volume) return null;
+	return {
+		catalog,
+		schema,
+		volume
+	};
+}
+/**
+* Check if volume storage is configured and available
+*/
+function isVolumeStorageAvailable() {
+	return getVolumeConfig() !== null;
+}
+/**
+* Get the Databricks host URL for API calls
+*/
+function getDatabricksHostUrl() {
+	if (getAuthMethod() === "cli") {
+		const cachedHost = getCachedCliHost();
+		if (cachedHost) return cachedHost;
+	}
+	return getHostUrl();
+}
+/**
+* Build the volume path for a file
+*/
+function buildVolumePath(config, options, filename) {
+	const { chatId, projectId, fileId } = options;
+	if (projectId) return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/projects/${projectId}/files/${fileId}/${filename}`;
+	if (chatId) return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/chats/${chatId}/files/${fileId}/${filename}`;
+	return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/temp/${fileId}/${filename}`;
+}
+/**
+* Calculate SHA-256 checksum for integrity verification
+*/
+function calculateChecksum(buffer) {
+	return createHash("sha256").update(buffer).digest("hex");
+}
+/**
+* Databricks Volume Storage class
+*/
+var DatabricksVolumeStorage = class {
+	config;
+	constructor() {
+		const config = getVolumeConfig();
+		if (!config) throw new Error("Volume storage not configured. Set VOLUME_CATALOG, VOLUME_SCHEMA, and VOLUME_NAME environment variables.");
+		this.config = config;
+	}
+	/**
+	* Upload a file to Databricks Volume
+	*/
+	async uploadFile(buffer, filename, options) {
+		const volumePath = buildVolumePath(this.config, options, filename);
+		const checksum = calculateChecksum(buffer);
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}?overwrite=true`;
+		console.log(`[VolumeStorage] Uploading file to: ${volumePath}`);
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/octet-stream"
+			},
+			body: buffer
+		});
+		if (!response.ok) {
+			const errorText = await response.text();
+			throw new Error(`Failed to upload file to volume: ${response.status} ${errorText}`);
+		}
+		console.log(`[VolumeStorage] File uploaded successfully: ${volumePath} (${buffer.length} bytes)`);
+		return {
+			volumePath,
+			volumeCatalog: this.config.catalog,
+			volumeSchema: this.config.schema,
+			volumeName: this.config.volume,
+			checksum
+		};
+	}
+	/**
+	* Download a file from Databricks Volume
+	*/
+	async downloadFile(volumePath) {
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
+		console.log(`[VolumeStorage] Downloading file from: ${volumePath}`);
+		const response = await fetch(url, {
+			method: "GET",
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		if (!response.ok) {
+			const errorText = await response.text();
+			throw new Error(`Failed to download file from volume: ${response.status} ${errorText}`);
+		}
+		const arrayBuffer = await response.arrayBuffer();
+		const buffer = Buffer.from(arrayBuffer);
+		console.log(`[VolumeStorage] File downloaded successfully: ${volumePath} (${buffer.length} bytes)`);
+		return buffer;
+	}
+	/**
+	* Delete a file from Databricks Volume
+	*/
+	async deleteFile(volumePath) {
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
+		console.log(`[VolumeStorage] Deleting file: ${volumePath}`);
+		const response = await fetch(url, {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		if (!response.ok) {
+			const errorText = await response.text();
+			if (response.status !== 404) throw new Error(`Failed to delete file from volume: ${response.status} ${errorText}`);
+		}
+		console.log(`[VolumeStorage] File deleted successfully: ${volumePath}`);
+	}
+	/**
+	* Check if a file exists in the Volume
+	*/
+	async fileExists(volumePath) {
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
+		try {
+			return (await fetch(url, {
+				method: "HEAD",
+				headers: { Authorization: `Bearer ${token}` }
+			})).ok;
+		} catch {
+			return false;
+		}
+	}
+	/**
+	* Get the volume configuration
+	*/
+	getConfig() {
+		return { ...this.config };
+	}
+};
+/**
+* Get a singleton instance of the volume storage
+* Returns null if volume storage is not configured
+*/
+let volumeStorageInstance = null;
+function getVolumeStorage() {
+	if (!isVolumeStorageAvailable()) return null;
+	if (!volumeStorageInstance) try {
+		volumeStorageInstance = new DatabricksVolumeStorage();
+	} catch (error) {
+		console.warn("[VolumeStorage] Failed to initialize:", error);
+		return null;
+	}
+	return volumeStorageInstance;
+}
+
+//#endregion
 //#region src/routes/files.ts
 const filesRouter = Router();
 filesRouter.use(fileUpload({
 	limits: { fileSize: 10 * 1024 * 1024 },
 	useTempFiles: true,
-	tempFileDir: os$1.tmpdir()
+	tempFileDir: os.tmpdir()
 }));
 filesRouter.use(authMiddleware);
 const sessionMemory$1 = ProjectSessionMemory.getInstance();
 /**
 * POST /api/files/upload - Upload a file to a chat session
+*
+* Storage strategy:
+* 1. Original file -> Databricks Volume (if available)
+* 2. Extracted text + metadata -> PostgreSQL (if available)
+* 3. Fallback -> Session memory (ephemeral)
 */
 filesRouter.post("/upload", requireAuth, async (req, res) => {
 	try {
-		const { chatId } = req.body;
+		const { chatId, projectId } = req.body;
 		const userId = req.session?.user.id;
 		if (!chatId) {
 			const response = new ChatSDKError("bad_request:api", "Chat ID is required").toResponse();
@@ -998,11 +1220,36 @@ filesRouter.post("/upload", requireAuth, async (req, res) => {
 			const response = new ChatSDKError("bad_request:api", "File not found in request").toResponse();
 			return res.status(response.status).json(response.json);
 		}
-		const processedFile = await FileProcessor.processFile(uploadedFile.tempFilePath, uploadedFile.name, uploadedFile.mimetype);
 		const fileId = generateUUID();
+		const fileBuffer = await fs.readFile(uploadedFile.tempFilePath);
+		const processedFile = await FileProcessor.processFile(uploadedFile.tempFilePath, uploadedFile.name, uploadedFile.mimetype);
 		sessionMemory$1.addFile(chatId, userId, fileId, processedFile);
+		let storageType = "memory";
+		let volumePath;
+		let volumeCatalog;
+		let volumeSchema;
+		let volumeName;
+		let fileChecksum;
+		const volumeStorage = getVolumeStorage();
+		if (volumeStorage) try {
+			const volumeResult = await volumeStorage.uploadFile(fileBuffer, uploadedFile.name, {
+				chatId,
+				projectId,
+				fileId
+			});
+			volumePath = volumeResult.volumePath;
+			volumeCatalog = volumeResult.volumeCatalog;
+			volumeSchema = volumeResult.volumeSchema;
+			volumeName = volumeResult.volumeName;
+			fileChecksum = volumeResult.checksum;
+			storageType = "volume";
+			console.log(`[FileUpload] File uploaded to volume: ${volumePath}`);
+		} catch (volumeError) {
+			console.warn("[FileUpload] Volume upload failed, falling back to memory storage:", volumeError);
+		}
+		else console.log("[FileUpload] Volume storage not configured, using memory storage");
 		if (isDatabaseAvailable()) try {
-			const { checkChatAccess: checkChatAccess$1 } = await import("./src-DLwhYGuN.mjs");
+			const { checkChatAccess: checkChatAccess$1 } = await import("./src-NJY5VbwO.mjs");
 			const { chat } = await checkChatAccess$1(chatId, userId);
 			if (chat) await saveFileUpload({
 				id: fileId,
@@ -1012,11 +1259,17 @@ filesRouter.post("/upload", requireAuth, async (req, res) => {
 				contentType: processedFile.contentType,
 				fileSize: processedFile.fileSize,
 				extractedContent: processedFile.extractedContent,
-				metadata: processedFile.metadata
+				metadata: processedFile.metadata,
+				volumePath,
+				volumeCatalog,
+				volumeSchema,
+				volumeName,
+				storageType,
+				fileChecksum
 			});
-			else console.log(`Chat ${chatId} not in database yet, file stored in session memory only`);
+			else console.log(`Chat ${chatId} not in database yet, file metadata stored in session memory only`);
 		} catch (dbError) {
-			console.log("Could not save file to database, stored in session memory:", dbError);
+			console.log("Could not save file metadata to database, stored in session memory:", dbError);
 		}
 		await FileProcessor.cleanupTempFile(uploadedFile.tempFilePath);
 		res.json({
@@ -1026,7 +1279,8 @@ filesRouter.post("/upload", requireAuth, async (req, res) => {
 			fileSize: processedFile.fileSize,
 			metadata: processedFile.metadata,
 			hasContent: !!processedFile.extractedContent,
-			isImage: FileProcessor.isImageFile(processedFile.filename)
+			isImage: FileProcessor.isImageFile(processedFile.filename),
+			storageType
 		});
 	} catch (error) {
 		console.error("File upload error:", error);
@@ -1052,7 +1306,9 @@ filesRouter.get("/:chatId", requireAuth, async (req, res) => {
 			metadata: file.metadata,
 			uploadedAt: file.createdAt,
 			hasContent: !!file.extractedContent,
-			isImage: FileProcessor.isImageFile(file.filename)
+			isImage: FileProcessor.isImageFile(file.filename),
+			storageType: file.storageType || "memory",
+			canDownload: file.storageType === "volume" && !!file.volumePath
 		});
 		for (const sessionFile of sessionFiles) fileMap.set(sessionFile.id, {
 			id: sessionFile.id,
@@ -1062,7 +1318,9 @@ filesRouter.get("/:chatId", requireAuth, async (req, res) => {
 			metadata: sessionFile.file.metadata,
 			uploadedAt: sessionFile.uploadedAt,
 			hasContent: !!sessionFile.file.extractedContent,
-			isImage: FileProcessor.isImageFile(sessionFile.file.filename)
+			isImage: FileProcessor.isImageFile(sessionFile.file.filename),
+			storageType: "memory",
+			canDownload: false
 		});
 		const files = Array.from(fileMap.values());
 		res.json({ files });
@@ -1073,7 +1331,7 @@ filesRouter.get("/:chatId", requireAuth, async (req, res) => {
 	}
 });
 /**
-* GET /api/files/:chatId/:fileId/content - Get file content
+* GET /api/files/:chatId/:fileId/content - Get file extracted content (text)
 */
 filesRouter.get("/:chatId/:fileId/content", requireAuth, async (req, res) => {
 	try {
@@ -1104,11 +1362,62 @@ filesRouter.get("/:chatId/:fileId/content", requireAuth, async (req, res) => {
 	}
 });
 /**
-* DELETE /api/files/:chatId/:fileId - Delete a file from session
+* GET /api/files/:chatId/:fileId/download - Download original file from Volume
+*/
+filesRouter.get("/:chatId/:fileId/download", requireAuth, async (req, res) => {
+	try {
+		const { chatId, fileId } = req.params;
+		if (!isDatabaseAvailable()) {
+			const response = new ChatSDKError("bad_request:api", "Database not available for file download").toResponse();
+			return res.status(response.status).json(response.json);
+		}
+		const file = await getFileUploadById({ id: fileId });
+		if (!file) {
+			const response = new ChatSDKError("not_found:api", "File not found").toResponse();
+			return res.status(response.status).json(response.json);
+		}
+		if (file.chatId !== chatId) {
+			const response = new ChatSDKError("forbidden:api", "File does not belong to this chat").toResponse();
+			return res.status(response.status).json(response.json);
+		}
+		if (file.storageType !== "volume" || !file.volumePath) {
+			const response = new ChatSDKError("bad_request:api", "File is not available for download (stored in memory only)").toResponse();
+			return res.status(response.status).json(response.json);
+		}
+		const volumeStorage = getVolumeStorage();
+		if (!volumeStorage) {
+			const response = new ChatSDKError("bad_request:api", "Volume storage not configured").toResponse();
+			return res.status(response.status).json(response.json);
+		}
+		const fileBuffer = await volumeStorage.downloadFile(file.volumePath);
+		res.setHeader("Content-Type", file.contentType);
+		res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(file.filename)}"`);
+		res.setHeader("Content-Length", fileBuffer.length);
+		res.send(fileBuffer);
+	} catch (error) {
+		console.error("Download file error:", error);
+		const response = new ChatSDKError("bad_request:api", error instanceof Error ? error.message : "Failed to download file").toResponse();
+		return res.status(response.status).json(response.json);
+	}
+});
+/**
+* DELETE /api/files/:chatId/:fileId - Delete a file from session and storage
 */
 filesRouter.delete("/:chatId/:fileId", requireAuth, async (req, res) => {
 	try {
 		const { chatId, fileId } = req.params;
+		if (isDatabaseAvailable()) {
+			const file = await getFileUploadById({ id: fileId });
+			if (file?.storageType === "volume" && file.volumePath) {
+				const volumeStorage = getVolumeStorage();
+				if (volumeStorage) try {
+					await volumeStorage.deleteFile(file.volumePath);
+					console.log(`[FileDelete] Deleted from volume: ${file.volumePath}`);
+				} catch (volumeError) {
+					console.warn("[FileDelete] Failed to delete from volume:", volumeError);
+				}
+			}
+		}
 		sessionMemory$1.removeFile(chatId, fileId);
 		if (isDatabaseAvailable()) await deleteFileUpload({ id: fileId });
 		res.json({ success: true });
@@ -1165,13 +1474,13 @@ projectsRouter.use(authMiddleware);
 projectsRouter.use(fileUpload({
 	limits: { fileSize: 10 * 1024 * 1024 },
 	useTempFiles: true,
-	tempFileDir: os$1.tmpdir()
+	tempFileDir: os.tmpdir()
 }));
 const sessionMemory = ProjectSessionMemory.getInstance();
 projectsRouter.post("/", requireAuth, async (req, res) => {
 	try {
 		const validatedData = createProjectSchema.parse(req.body);
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const project = await createProject({
 			userId,
 			...validatedData
@@ -1189,16 +1498,16 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
 });
 projectsRouter.get("/", requireAuth, async (req, res) => {
 	try {
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const projects = await getProjectsByUserId({ userId });
 		res.json(projects);
-	} catch (error) {
+	} catch (_error) {
 		res.status(500).json({ error: "Failed to fetch projects" });
 	}
 });
 projectsRouter.get("/:id", requireAuth, async (req, res) => {
 	try {
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const project = await getProjectById({
 			id: req.params.id,
 			userId
@@ -1213,7 +1522,7 @@ projectsRouter.get("/:id", requireAuth, async (req, res) => {
 projectsRouter.patch("/:id", requireAuth, async (req, res) => {
 	try {
 		const validatedData = updateProjectSchema.parse(req.body);
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const project = await updateProject({
 			id: req.params.id,
 			userId,
@@ -1232,7 +1541,7 @@ projectsRouter.patch("/:id", requireAuth, async (req, res) => {
 });
 projectsRouter.delete("/:id", requireAuth, async (req, res) => {
 	try {
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		if (!await deleteProject({
 			id: req.params.id,
 			userId
@@ -1245,7 +1554,7 @@ projectsRouter.delete("/:id", requireAuth, async (req, res) => {
 });
 projectsRouter.post("/:id/chats/:chatId", requireAuth, async (req, res) => {
 	try {
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const { id: projectId, chatId } = req.params;
 		if (!await getProjectById({
 			id: projectId,
@@ -1268,32 +1577,32 @@ projectsRouter.post("/:id/chats/:chatId", requireAuth, async (req, res) => {
 });
 projectsRouter.delete("/:id/chats/:chatId", requireAuth, async (req, res) => {
 	try {
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const { chatId } = req.params;
 		if (!await removeChatFromProject({
 			chatId,
 			userId
 		})) throw new ChatSDKError("internal:database", "Failed to remove chat from project");
 		res.status(204).send();
-	} catch (error) {
+	} catch (_error) {
 		res.status(500).json({ error: "Failed to remove chat from project" });
 	}
 });
 projectsRouter.get("/:id/chats", requireAuth, async (req, res) => {
 	try {
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const chats = await getChatsByProjectId({
 			projectId: req.params.id,
 			userId
 		});
 		res.json(chats);
-	} catch (error) {
+	} catch (_error) {
 		res.status(500).json({ error: "Failed to fetch project chats" });
 	}
 });
 projectsRouter.post("/:id/files", requireAuth, async (req, res) => {
 	try {
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const { id: projectId } = req.params;
 		const { fileId } = req.body;
 		if (!fileId) throw new ChatSDKError("bad_request:missing_param", "fileId is required");
@@ -1315,7 +1624,7 @@ projectsRouter.get("/:id/files", requireAuth, async (req, res) => {
 	try {
 		const files = await getProjectFiles({ projectId: req.params.id });
 		res.json(files);
-	} catch (error) {
+	} catch (_error) {
 		res.status(500).json({ error: "Failed to fetch project files" });
 	}
 });
@@ -1328,14 +1637,14 @@ projectsRouter.delete("/:id/files/:fileId", requireAuth, async (req, res) => {
 		})) throw new ChatSDKError("internal:database", "Failed to remove file from project");
 		sessionMemory.removeProjectFile(projectId, fileId);
 		res.status(204).send();
-	} catch (error) {
+	} catch (_error) {
 		res.status(500).json({ error: "Failed to remove file from project" });
 	}
 });
 projectsRouter.post("/:id/upload", requireAuth, async (req, res) => {
 	try {
 		const { id: projectId } = req.params;
-		const userId = req.session.user.id;
+		const userId = req.session?.user.id;
 		const project = await getProjectById(projectId);
 		if (!project || project.userId !== userId) {
 			const response = new ChatSDKError("forbidden:project", "Access denied to project").toResponse();
@@ -1391,7 +1700,7 @@ projectsRouter.post("/:id/upload", requireAuth, async (req, res) => {
 				projectId
 			});
 			if (tempPath) try {
-				await (await import("fs/promises")).unlink(tempPath);
+				await (await import("node:fs/promises")).unlink(tempPath);
 			} catch (err) {
 				console.warn("Failed to clean up temp file:", err);
 			}
@@ -1437,7 +1746,7 @@ projectsRouter.get("/:id/context", requireAuth, async (req, res) => {
 	try {
 		const contexts = await getProjectContexts({ projectId: req.params.id });
 		res.json(contexts);
-	} catch (error) {
+	} catch (_error) {
 		res.status(500).json({ error: "Failed to fetch project contexts" });
 	}
 });
@@ -1465,7 +1774,7 @@ projectsRouter.delete("/:id/context/:contextId", requireAuth, async (req, res) =
 		const { contextId } = req.params;
 		if (!await deleteProjectContext({ id: contextId })) throw new ChatSDKError("internal:database", "Failed to delete context");
 		res.status(204).send();
-	} catch (error) {
+	} catch (_error) {
 		res.status(500).json({ error: "Failed to delete context" });
 	}
 });

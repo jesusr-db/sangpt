@@ -79,7 +79,12 @@ async function main() {
     console.log('📂 Migrations folder:', migrationsFolder);
     console.log('🔄 Applying pending migrations...');
 
-    await migrate(db, { migrationsFolder });
+    // Use ai_chatbot schema for migration tracking table to avoid permission issues
+    // with the default 'drizzle' schema in Databricks Lakebase
+    await migrate(db, {
+      migrationsFolder,
+      migrationsSchema: schemaName,
+    });
 
     console.log('✅ All migrations applied successfully');
 

@@ -25,7 +25,6 @@ import {
   updateChatLastContextById,
   updateChatVisiblityById,
   isDatabaseAvailable,
-  getChatById,
   getProjectContexts,
   getProjectFiles,
 } from '@chat-template/db';
@@ -215,7 +214,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     const streamId = generateUUID();
 
     // Get file context for this chat
-    const fileContext = sessionMemory.getContextString(id);
+    const _fileContext = sessionMemory.getContextString(id);
 
     // Get project context if chat belongs to a project
     let projectContext: string | null = null;
@@ -276,17 +275,23 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       });
     }
 
-    // Add file context (includes both project files and chat-specific files)
+    // Get file content parts for potential multimodal injection
+    const fileContentParts = sessionMemory.getFilesAsContentParts(id);
+    const imageContentParts = fileContentParts.filter(p => p.type === 'image');
+    const _textContentParts = fileContentParts.filter(p => p.type === 'text');
+    const hasImages = imageContentParts.length > 0;
+
+    // Add file context for text-based files (includes both project files and chat-specific files)
     const allFileContext = sessionMemory.getContextString(id);
     if (allFileContext || projectFileContext) {
       let fileMessage = 'You have access to the following files:\n\n';
 
       if (projectFileContext) {
-        fileMessage += 'Project Files:\n' + projectFileContext + '\n\n';
+        fileMessage += `Project Files:\n${projectFileContext}\n\n`;
       }
 
       if (allFileContext) {
-        fileMessage += 'Chat Files:\n' + allFileContext;
+        fileMessage += `Chat Files:\n${allFileContext}`;
       }
 
       fileMessage += '\n\nYou can reference these files by name when responding to user queries.';
@@ -300,6 +305,38 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     // Prepend system messages to the conversation
     if (systemMessages.length > 0) {
       messagesForModel = [...systemMessages, ...messagesForModel];
+    }
+
+    // Inject image content parts into the last user message for vision models
+    // This allows models that support vision to actually see uploaded images
+    if (hasImages) {
+      // Find the last user message
+      const lastUserMsgIndex = messagesForModel.findLastIndex(
+        m => m.role === 'user',
+      );
+
+      if (lastUserMsgIndex !== -1) {
+        const lastUserMsg = messagesForModel[lastUserMsgIndex];
+        const currentContent = lastUserMsg.content;
+
+        // Convert current content to array format if it's a string
+        const existingContent =
+          typeof currentContent === 'string'
+            ? [{ type: 'text' as const, text: currentContent }]
+            : Array.isArray(currentContent)
+              ? currentContent
+              : [];
+
+        // Create new message with images prepended
+        messagesForModel[lastUserMsgIndex] = {
+          ...lastUserMsg,
+          content: [...imageContentParts, ...existingContent],
+        };
+
+        console.log(
+          `[Chat] Injected ${imageContentParts.length} image(s) into user message for vision model`,
+        );
+      }
     }
 
     const model = await myProvider.languageModel(selectedChatModel);

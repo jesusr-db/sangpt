@@ -1,7 +1,12 @@
 command: ["npm", "run", "start"]
 runtime: nodejs20
 
-
 env:
   - name: DATABRICKS_SERVING_ENDPOINT
     valueFrom: serving-endpoint
+  - name: VOLUME_CATALOG
+    value: "jmr_demo"
+  - name: VOLUME_SCHEMA
+    value: "default"
+  - name: VOLUME_NAME
+    value: "chatbot-files-dev-jesus-rodriguez"

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import useSWR from 'swr';
 import type { Project } from '@chat-template/db';
 import { fetcher } from '@/lib/utils';

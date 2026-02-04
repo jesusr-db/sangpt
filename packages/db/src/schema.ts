@@ -85,6 +85,15 @@ export const fileUpload = createTable('FileUpload', {
   extractedContent: text('extractedContent'),
   metadata: jsonb('metadata').$type<Record<string, any>>(),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
+  // Volume storage fields
+  volumePath: text('volumePath'), // "/chats/{chatId}/files/{fileId}/name.pdf"
+  volumeCatalog: text('volumeCatalog'), // "main"
+  volumeSchema: text('volumeSchema'), // "default"
+  volumeName: text('volumeName'), // "chatbot-files"
+  storageType: varchar('storageType', { enum: ['volume', 'memory'] })
+    .notNull()
+    .default('memory'),
+  fileChecksum: text('fileChecksum'), // SHA-256 for integrity verification
 });
 
 export type FileUpload = InferSelectModel<typeof fileUpload>;

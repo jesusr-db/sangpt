@@ -10,6 +10,15 @@ variables:
     default: "chatbot-lakebase"
   resource_name_suffix:
     description: "Suffix for resource names (app/lakebase instance names etc). Helpful for avoiding name collisions if multiple users deploy this app to the same workspace"
+  volume_catalog:
+    description: "Unity Catalog name for file storage"
+    default: "jmr_demo"
+  volume_schema:
+    description: "Schema for file storage volume"
+    default: "default"
+  volume_name:
+    description: "Volume name for file storage"
+    default: "chatbot-files"
 
 resources:
   database_instances:
@@ -19,29 +28,50 @@ resources:
       name: ${var.database_instance_name}-${var.resource_name_suffix}
       capacity: CU_1
 
+  # Volume resource for file storage (created by DAB)
+  volumes:
+    chatbot_files:
+      catalog_name: ${var.volume_catalog}
+      schema_name: ${var.volume_schema}
+      name: ${var.volume_name}-${var.resource_name_suffix}
+      volume_type: MANAGED
+      comment: "File storage for chatbot application"
+
   apps:
     databricks_chatbot:
       # NOTE: customize the app name here, if desired
       name: db-chatbot-${var.resource_name_suffix}
       description: "Agentic Chat application for Foundation Models, Agent Bricks, and custom code agents"
       source_code_path: .
+      config:
+        command: ["npm", "run", "start"]
+        env:
+          - name: VOLUME_CATALOG
+            value: ${var.volume_catalog}
+          - name: VOLUME_SCHEMA
+            value: ${var.volume_schema}
+          - name: VOLUME_NAME
+            value: ${resources.volumes.chatbot_files.name}
+          - name: DATABRICKS_SERVING_ENDPOINT
+            value: ${var.serving_endpoint_name}
       resources:
         - name: serving-endpoint
           description: "Databricks serving endpoint name for the AI agent"
-          # NOTE: If chatting with an Agent Bricks Multi-Agent Supervisor (https://docs.databricks.com/aws/en/generative-ai/agent-bricks/multi-agent-supervisor),
-          # you need to additionally grant the app service principal the `CAN_QUERY` permission on the
-          # underlying agent(s) that the MAS orchestrates. You can do this by adding those
-          # agent serving endpoints as additional resources here.
           serving_endpoint:
             name: ${var.serving_endpoint_name}
             permission: CAN_QUERY
-        # Database resource enabled for persistent chat history
         - name: database
           description: "Lakebase database instance for the chat app"
           database:
             database_name: databricks_postgres
             instance_name: ${resources.database_instances.chatbot_lakebase.name}
             permission: CAN_CONNECT_AND_CREATE
+        - name: volume
+          description: "Unity Catalog volume for file storage"
+          uc_securable:
+            securable_full_name: ${var.volume_catalog}.${var.volume_schema}.${resources.volumes.chatbot_files.name}
+            securable_type: VOLUME
+            permission: WRITE_VOLUME
 
 targets:
   dev:

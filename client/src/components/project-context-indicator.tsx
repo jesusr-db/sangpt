@@ -24,7 +24,7 @@ export function ProjectContextIndicator({
 }: ProjectContextIndicatorProps) {
   const [contexts, setContexts] = useState<ProjectContext[]>([]);
   const [files, setFiles] = useState<ProjectFile[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [_isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (!projectId) {
@@ -58,8 +58,8 @@ export function ProjectContextIndicator({
 
   return (
     <TooltipProvider>
-      <div className="flex items-center gap-2 px-4 py-2 bg-muted/50 border-b">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div className='flex items-center gap-2 border-b bg-muted/50 px-4 py-2'>
+        <div className='flex items-center gap-2 text-muted-foreground text-sm'>
           {projectIcon ? (
             <span className="text-base">{projectIcon}</span>
           ) : (
@@ -73,11 +73,11 @@ export function ProjectContextIndicator({
           </span>
         </div>
 
-        <div className="flex items-center gap-3 ml-auto">
+        <div className='ml-auto flex items-center gap-3'>
           {hasInstructions && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <div className='flex items-center gap-1 text-muted-foreground text-xs'>
                   <InfoIcon className="h-3 w-3" />
                   <span>{contexts.filter(c => c.contextType === 'instruction').length} instructions</span>
                 </div>
@@ -101,7 +101,7 @@ export function ProjectContextIndicator({
           {hasFiles && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <div className='flex items-center gap-1 text-muted-foreground text-xs'>
                   <FileTextIcon className="h-3 w-3" />
                   <span>{files.length} shared files</span>
                 </div>
@@ -116,7 +116,7 @@ export function ProjectContextIndicator({
                       </p>
                     ))}
                     {files.length > 5 && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className='text-muted-foreground text-xs'>
                         ...and {files.length - 5} more
                       </p>
                     )}

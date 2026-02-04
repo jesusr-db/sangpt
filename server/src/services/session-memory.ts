@@ -116,7 +116,7 @@ export class SessionMemory {
   /**
    * Get context string for all files in a session
    */
-  getContextString(chatId: string, maxFiles: number = 10): string {
+  getContextString(chatId: string, maxFiles = 10): string {
     const files = this.getSessionFiles(chatId);
     if (files.length === 0) {
       return '';

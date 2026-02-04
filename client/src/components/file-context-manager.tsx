@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, } from 'react';
 import { FileChip, type UploadedFile } from './file-upload-area';
 import { Button } from './ui/button';
-import { Trash2, Eye, EyeOff, FileText } from 'lucide-react';
+import { Trash2, EyeOff, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Collapsible,
@@ -103,13 +103,13 @@ export function FileContextManager({
   return (
     <div className={cn('rounded-lg border bg-card p-4', className)}>
       <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <div className="flex items-center justify-between mb-2">
-          <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors">
+        <div className='mb-2 flex items-center justify-between'>
+          <CollapsibleTrigger className='flex items-center gap-2 font-medium text-sm transition-colors hover:text-primary'>
             <FileText className="h-4 w-4" />
             <span>
               Uploaded Files ({uploadedFiles.length})
             </span>
-            <span className="text-xs text-gray-500">
+            <span className='text-gray-500 text-xs'>
               {isExpanded ? '▼' : '▶'}
             </span>
           </CollapsibleTrigger>
@@ -119,9 +119,9 @@ export function FileContextManager({
               variant="ghost"
               size="sm"
               onClick={clearAllFiles}
-              className="text-xs text-red-500 hover:text-red-600"
+              className='text-red-500 text-xs hover:text-red-600'
             >
-              <Trash2 className="h-3 w-3 mr-1" />
+              <Trash2 className='mr-1 h-3 w-3' />
               Clear All
             </Button>
           )}
@@ -141,9 +141,9 @@ export function FileContextManager({
             </div>
 
             {selectedFile && fileContent && (
-              <div className="mt-3 p-3 rounded bg-gray-50 dark:bg-gray-900">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+              <div className='mt-3 rounded bg-gray-50 p-3 dark:bg-gray-900'>
+                <div className='mb-2 flex items-center justify-between'>
+                  <span className='font-medium text-gray-600 text-xs dark:text-gray-400'>
                     File Preview: {uploadedFiles.find(f => f.id === selectedFile)?.filename}
                   </span>
                   <Button
@@ -158,14 +158,14 @@ export function FileContextManager({
                     <EyeOff className="h-3 w-3" />
                   </Button>
                 </div>
-                <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                <pre className='max-h-40 overflow-y-auto whitespace-pre-wrap text-gray-700 text-xs dark:text-gray-300'>
                   {fileContent}
                 </pre>
               </div>
             )}
 
             {isLoadingContent && (
-              <div className="text-xs text-gray-500 text-center py-2">
+              <div className='py-2 text-center text-gray-500 text-xs'>
                 Loading file content...
               </div>
             )}
@@ -188,13 +188,13 @@ export function FileReferenceHelper({
   }
 
   return (
-    <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+    <div className='flex items-center gap-1 text-gray-500 text-xs dark:text-gray-400'>
       <span>Reference files:</span>
       {uploadedFiles.map((file) => (
         <button
           key={file.id}
           onClick={() => onInsertReference(file.filename)}
-          className="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          className='rounded px-2 py-0.5 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800'
         >
           @{file.filename}
         </button>

@@ -9,16 +9,19 @@ import { authMiddleware, requireAuth } from '../middleware/auth';
 import { FileProcessor } from '../services/file-processor';
 import { ProjectSessionMemory } from '../services/project-session-memory';
 import {
+  getVolumeStorage,
+} from '../services/volume-storage';
+import {
   saveFileUpload,
   getFileUploadsByChatId,
+  getFileUploadById,
   deleteFileUpload,
   isDatabaseAvailable,
 } from '@chat-template/db';
 import { generateUUID } from '@chat-template/core';
 import { ChatSDKError } from '@chat-template/core/errors';
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import * as os from 'os';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 
 export const filesRouter: RouterType = Router();
 
@@ -38,13 +41,18 @@ const sessionMemory = ProjectSessionMemory.getInstance();
 
 /**
  * POST /api/files/upload - Upload a file to a chat session
+ *
+ * Storage strategy:
+ * 1. Original file -> Databricks Volume (if available)
+ * 2. Extracted text + metadata -> PostgreSQL (if available)
+ * 3. Fallback -> Session memory (ephemeral)
  */
 filesRouter.post(
   '/upload',
   requireAuth,
   async (req: Request, res: Response) => {
     try {
-      const { chatId } = req.body;
+      const { chatId, projectId } = req.body;
       const userId = req.session?.user.id;
 
       if (!chatId) {
@@ -69,22 +77,62 @@ filesRouter.post(
         return res.status(response.status).json(response.json);
       }
 
-      // Process the file
+      // Generate file ID
+      const fileId = generateUUID();
+
+      // Read the file buffer for volume upload
+      const fileBuffer = await fs.readFile(uploadedFile.tempFilePath);
+
+      // Process the file (extract text content)
       const processedFile = await FileProcessor.processFile(
         uploadedFile.tempFilePath,
         uploadedFile.name,
         uploadedFile.mimetype,
       );
 
-      // Generate file ID
-      const fileId = generateUUID();
-
-      // Store in session memory
+      // Store in session memory (always available as fallback)
       sessionMemory.addFile(chatId, userId!, fileId, processedFile);
 
-      // Store in database if available AND chat exists
-      // We check if the chat exists first to avoid foreign key violations
-      // Files will be stored in session memory regardless
+      // Track storage type and volume info
+      let storageType: 'volume' | 'memory' = 'memory';
+      let volumePath: string | undefined;
+      let volumeCatalog: string | undefined;
+      let volumeSchema: string | undefined;
+      let volumeName: string | undefined;
+      let fileChecksum: string | undefined;
+
+      // Try to upload to Databricks Volume
+      const volumeStorage = getVolumeStorage();
+      if (volumeStorage) {
+        try {
+          const volumeResult = await volumeStorage.uploadFile(
+            fileBuffer,
+            uploadedFile.name,
+            { chatId, projectId, fileId },
+          );
+
+          volumePath = volumeResult.volumePath;
+          volumeCatalog = volumeResult.volumeCatalog;
+          volumeSchema = volumeResult.volumeSchema;
+          volumeName = volumeResult.volumeName;
+          fileChecksum = volumeResult.checksum;
+          storageType = 'volume';
+
+          console.log(`[FileUpload] File uploaded to volume: ${volumePath}`);
+        } catch (volumeError) {
+          console.warn(
+            '[FileUpload] Volume upload failed, falling back to memory storage:',
+            volumeError,
+          );
+          // Continue with memory storage
+        }
+      } else {
+        console.log(
+          '[FileUpload] Volume storage not configured, using memory storage',
+        );
+      }
+
+      // Store metadata in database if available
       if (isDatabaseAvailable()) {
         try {
           // Check if chat exists in database
@@ -102,13 +150,25 @@ filesRouter.post(
               fileSize: processedFile.fileSize,
               extractedContent: processedFile.extractedContent,
               metadata: processedFile.metadata,
+              // Volume storage fields
+              volumePath,
+              volumeCatalog,
+              volumeSchema,
+              volumeName,
+              storageType,
+              fileChecksum,
             });
           } else {
-            console.log(`Chat ${chatId} not in database yet, file stored in session memory only`);
+            console.log(
+              `Chat ${chatId} not in database yet, file metadata stored in session memory only`,
+            );
           }
         } catch (dbError) {
           // If database save fails, just log it - file is still in session memory
-          console.log('Could not save file to database, stored in session memory:', dbError);
+          console.log(
+            'Could not save file metadata to database, stored in session memory:',
+            dbError,
+          );
         }
       }
 
@@ -123,6 +183,7 @@ filesRouter.post(
         metadata: processedFile.metadata,
         hasContent: !!processedFile.extractedContent,
         isImage: FileProcessor.isImageFile(processedFile.filename),
+        storageType,
       });
     } catch (error) {
       console.error('File upload error:', error);
@@ -169,6 +230,8 @@ filesRouter.get(
           uploadedAt: file.createdAt,
           hasContent: !!file.extractedContent,
           isImage: FileProcessor.isImageFile(file.filename),
+          storageType: file.storageType || 'memory',
+          canDownload: file.storageType === 'volume' && !!file.volumePath,
         });
       }
 
@@ -183,6 +246,8 @@ filesRouter.get(
           uploadedAt: sessionFile.uploadedAt,
           hasContent: !!sessionFile.file.extractedContent,
           isImage: FileProcessor.isImageFile(sessionFile.file.filename),
+          storageType: 'memory', // Session files are always in memory
+          canDownload: false,
         });
       }
 
@@ -201,7 +266,7 @@ filesRouter.get(
 );
 
 /**
- * GET /api/files/:chatId/:fileId/content - Get file content
+ * GET /api/files/:chatId/:fileId/content - Get file extracted content (text)
  */
 filesRouter.get(
   '/:chatId/:fileId/content',
@@ -226,7 +291,7 @@ filesRouter.get(
       // If not in session, try database
       if (isDatabaseAvailable()) {
         const files = await getFileUploadsByChatId({ chatId });
-        const file = files.find(f => f.id === fileId);
+        const file = files.find((f) => f.id === fileId);
 
         if (file) {
           return res.json({
@@ -254,7 +319,91 @@ filesRouter.get(
 );
 
 /**
- * DELETE /api/files/:chatId/:fileId - Delete a file from session
+ * GET /api/files/:chatId/:fileId/download - Download original file from Volume
+ */
+filesRouter.get(
+  '/:chatId/:fileId/download',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { chatId, fileId } = req.params;
+
+      // Get file metadata from database
+      if (!isDatabaseAvailable()) {
+        const error = new ChatSDKError(
+          'bad_request:api',
+          'Database not available for file download',
+        );
+        const response = error.toResponse();
+        return res.status(response.status).json(response.json);
+      }
+
+      const file = await getFileUploadById({ id: fileId });
+
+      if (!file) {
+        const error = new ChatSDKError('not_found:api', 'File not found');
+        const response = error.toResponse();
+        return res.status(response.status).json(response.json);
+      }
+
+      // Check that the file belongs to the requested chat
+      if (file.chatId !== chatId) {
+        const error = new ChatSDKError(
+          'forbidden:api',
+          'File does not belong to this chat',
+        );
+        const response = error.toResponse();
+        return res.status(response.status).json(response.json);
+      }
+
+      // Check if file is stored in Volume
+      if (file.storageType !== 'volume' || !file.volumePath) {
+        const error = new ChatSDKError(
+          'bad_request:api',
+          'File is not available for download (stored in memory only)',
+        );
+        const response = error.toResponse();
+        return res.status(response.status).json(response.json);
+      }
+
+      // Get volume storage
+      const volumeStorage = getVolumeStorage();
+      if (!volumeStorage) {
+        const error = new ChatSDKError(
+          'bad_request:api',
+          'Volume storage not configured',
+        );
+        const response = error.toResponse();
+        return res.status(response.status).json(response.json);
+      }
+
+      // Download file from Volume
+      const fileBuffer = await volumeStorage.downloadFile(file.volumePath);
+
+      // Set response headers
+      res.setHeader('Content-Type', file.contentType);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${encodeURIComponent(file.filename)}"`,
+      );
+      res.setHeader('Content-Length', fileBuffer.length);
+
+      // Send file
+      res.send(fileBuffer);
+    } catch (error) {
+      console.error('Download file error:', error);
+      const chatError = new ChatSDKError(
+        'bad_request:api',
+        error instanceof Error ? error.message : 'Failed to download file',
+      );
+      const response = chatError.toResponse();
+      return res.status(response.status).json(response.json);
+    }
+  },
+);
+
+/**
+ * DELETE /api/files/:chatId/:fileId - Delete a file from session and storage
  */
 filesRouter.delete(
   '/:chatId/:fileId',
@@ -262,6 +411,27 @@ filesRouter.delete(
   async (req: Request, res: Response) => {
     try {
       const { chatId, fileId } = req.params;
+
+      // Try to delete from Volume storage if available
+      if (isDatabaseAvailable()) {
+        const file = await getFileUploadById({ id: fileId });
+
+        if (file?.storageType === 'volume' && file.volumePath) {
+          const volumeStorage = getVolumeStorage();
+          if (volumeStorage) {
+            try {
+              await volumeStorage.deleteFile(file.volumePath);
+              console.log(`[FileDelete] Deleted from volume: ${file.volumePath}`);
+            } catch (volumeError) {
+              console.warn(
+                '[FileDelete] Failed to delete from volume:',
+                volumeError,
+              );
+              // Continue with database/memory deletion
+            }
+          }
+        }
+      }
 
       // Remove from session memory
       sessionMemory.removeFile(chatId, fileId);
