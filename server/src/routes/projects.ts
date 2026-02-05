@@ -27,7 +27,9 @@ import type { RouterType } from '../routes/types';
 import fileUpload from 'express-fileupload';
 import { FileProcessor } from '../services/file-processor';
 import { ProjectSessionMemory } from '../services/project-session-memory';
+import { getVolumeStorage } from '../services/volume-storage';
 import * as os from 'node:os';
+import * as fs from 'node:fs/promises';
 
 // Schema validation
 const createProjectSchema = z.object({
@@ -321,30 +323,78 @@ projectsRouter.post('/:id/upload', requireAuth, async (req, res) => {
 
     for (const file of fileArray) {
       try {
-        // Process the file
+        // Process the file - use correct signature: (filePath, filename, contentType)
         const tempPath = (file as any).tempFilePath;
-        const processedFile = await FileProcessor.processFile({
-          filename: file.name,
-          contentType: file.mimetype,
-          buffer: file.data,
-          filePath: tempPath,
-        });
+        const processedFile = await FileProcessor.processFile(
+          tempPath,
+          file.name,
+          file.mimetype,
+        );
 
         // Generate file ID
         const fileId = generateUUID();
+
+        // Read the file buffer for volume upload
+        const fileBuffer = await fs.readFile(tempPath);
+
+        // Track storage type and volume info
+        let storageType: 'volume' | 'memory' = 'memory';
+        let volumePath: string | undefined;
+        let volumeCatalog: string | undefined;
+        let volumeSchema: string | undefined;
+        let volumeName: string | undefined;
+        let fileChecksum: string | undefined;
+
+        // Try to upload to Databricks Volume
+        const volumeStorage = getVolumeStorage();
+        if (volumeStorage) {
+          try {
+            const volumeResult = await volumeStorage.uploadFile(
+              fileBuffer,
+              file.name,
+              { projectId, fileId },
+            );
+
+            volumePath = volumeResult.volumePath;
+            volumeCatalog = volumeResult.volumeCatalog;
+            volumeSchema = volumeResult.volumeSchema;
+            volumeName = volumeResult.volumeName;
+            fileChecksum = volumeResult.checksum;
+            storageType = 'volume';
+
+            console.log(`[Projects] File uploaded to volume: ${volumePath}`);
+          } catch (volumeError) {
+            console.warn(
+              '[Projects] Volume upload failed, falling back to memory storage:',
+              volumeError,
+            );
+            // Continue with memory storage
+          }
+        } else {
+          console.log(
+            '[Projects] Volume storage not configured, using memory storage',
+          );
+        }
 
         // Save to database if available
         let _savedFile = null;
         if (isDatabaseAvailable()) {
           _savedFile = await saveFileUpload({
             id: fileId,
+            chatId: null, // Project files don't belong to a specific chat
+            userId,
             filename: file.name,
             contentType: file.mimetype,
             fileSize: file.size,
             extractedContent: processedFile.extractedContent,
             metadata: processedFile.metadata,
-            projectId,
-            userId,
+            // Volume storage fields
+            volumePath,
+            volumeCatalog,
+            volumeSchema,
+            volumeName,
+            storageType,
+            fileChecksum,
           });
 
           // Add to project files association
@@ -369,12 +419,12 @@ projectsRouter.post('/:id/upload', requireAuth, async (req, res) => {
           fileSize: file.size,
           extractedContent: processedFile.extractedContent,
           projectId,
+          storageType,
         });
 
         // Clean up temp file
         if (tempPath) {
           try {
-            const fs = await import('node:fs/promises');
             await fs.unlink(tempPath);
           } catch (err) {
             console.warn('Failed to clean up temp file:', err);

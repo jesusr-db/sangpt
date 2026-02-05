@@ -4,6 +4,27 @@ import { extractReasoningMiddleware, wrapLanguageModel } from "ai";
 import { createDatabricksProvider } from "@databricks/ai-sdk-provider";
 
 //#region ../packages/ai-sdk-providers/src/databricks-foundation-provider.ts
+function transformImageContent$1(body) {
+	if (!body?.messages) return body;
+	const transformedMessages = body.messages.map((msg) => {
+		if (!msg.content || !Array.isArray(msg.content)) return msg;
+		const transformedContent = msg.content.map((part) => {
+			if (part.type === "image" && typeof part.image_url === "string") return {
+				type: "image_url",
+				image_url: { url: part.image_url }
+			};
+			return part;
+		});
+		return {
+			...msg,
+			content: transformedContent
+		};
+	});
+	return {
+		...body,
+		messages: transformedMessages
+	};
+}
 const FOUNDATION_MODELS = [
 	"databricks-dbrx-instruct",
 	"databricks-meta-llama-3-3-70b-instruct",
@@ -41,15 +62,40 @@ async function getOrCreateFoundationProvider() {
 		fetch: async (...[input, init]) => {
 			const headers = new Headers(init?.headers);
 			headers.set("Authorization", `Bearer ${token}`);
+			let transformedInit = init;
 			const url = input.toString();
 			if (init?.body) try {
-				const requestBody = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
+				const transformedBody = transformImageContent$1(typeof init.body === "string" ? JSON.parse(init.body) : init.body);
+				const messagesSummary = transformedBody.messages?.map((msg) => {
+					if (typeof msg.content === "string") return {
+						role: msg.role,
+						contentType: "string",
+						length: msg.content.length
+					};
+					if (Array.isArray(msg.content)) return {
+						role: msg.role,
+						contentType: "array",
+						parts: msg.content.map((part) => ({
+							type: part.type,
+							hasImageUrl: !!part.image_url
+						}))
+					};
+					return {
+						role: msg.role,
+						contentType: typeof msg.content
+					};
+				});
 				console.log("[Foundation] Request:", JSON.stringify({
 					url,
 					method: init.method || "POST",
-					model: requestBody.model,
-					messageCount: requestBody.messages?.length
+					model: transformedBody.model,
+					messageCount: transformedBody.messages?.length,
+					messagesSummary
 				}));
+				transformedInit = {
+					...init,
+					body: JSON.stringify(transformedBody)
+				};
 			} catch (_e) {
 				console.log("[Foundation] Request (raw):", {
 					url,
@@ -57,7 +103,7 @@ async function getOrCreateFoundationProvider() {
 				});
 			}
 			const response = await fetch(input, {
-				...init,
+				...transformedInit,
 				headers
 			});
 			console.log(`[Foundation] Response status: ${response.status}`);
@@ -130,15 +176,41 @@ async function getWorkspaceHostname() {
 	}
 }
 const LOG_SSE_EVENTS = process.env.LOG_SSE_EVENTS === "true";
+function transformImageContent(body) {
+	if (!body?.messages) return body;
+	const transformedMessages = body.messages.map((msg) => {
+		if (!msg.content || !Array.isArray(msg.content)) return msg;
+		const transformedContent = msg.content.map((part) => {
+			if (part.type === "image" && typeof part.image_url === "string") return {
+				type: "image_url",
+				image_url: { url: part.image_url }
+			};
+			return part;
+		});
+		return {
+			...msg,
+			content: transformedContent
+		};
+	});
+	return {
+		...body,
+		messages: transformedMessages
+	};
+}
 const databricksFetch = async (input, init) => {
 	const url = input.toString();
+	let transformedInit = init;
 	if (init?.body) try {
-		const requestBody = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
+		const transformedBody = transformImageContent(typeof init.body === "string" ? JSON.parse(init.body) : init.body);
 		console.log("Databricks request:", JSON.stringify({
 			url,
 			method: init.method || "POST",
-			body: requestBody
+			body: transformedBody
 		}));
+		transformedInit = {
+			...init,
+			body: JSON.stringify(transformedBody)
+		};
 	} catch (_e) {
 		console.log("Databricks request (raw):", {
 			url,
@@ -146,7 +218,7 @@ const databricksFetch = async (input, init) => {
 			body: init.body
 		});
 	}
-	const response = await fetch(url, init);
+	const response = await fetch(url, transformedInit);
 	if (LOG_SSE_EVENTS && response.body) {
 		const contentType = response.headers.get("content-type") || "";
 		if (contentType.includes("text/event-stream") || contentType.includes("application/x-ndjson")) {

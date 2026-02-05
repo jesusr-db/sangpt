@@ -27,7 +27,10 @@ import {
   isDatabaseAvailable,
   getProjectContexts,
   getProjectFiles,
+  getFileUploadsByChatId,
 } from '@chat-template/db';
+import { FileProcessor } from '../services/file-processor';
+import { getVolumeStorage } from '../services/volume-storage';
 import {
   type ChatMessage,
   checkChatAccess,
@@ -275,11 +278,97 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       });
     }
 
+    // Load files from database/Volume into session memory if not already there
+    // This ensures images have their base64Content available for vision models
+    if (isDatabaseAvailable()) {
+      try {
+        const dbFiles = await getFileUploadsByChatId({ chatId: id });
+        const sessionFiles = sessionMemory.getSessionFiles(id);
+        const sessionFileIds = new Set(sessionFiles.map(sf => sf.id));
+
+        for (const dbFile of dbFiles) {
+          // Skip if already in session memory
+          if (sessionFileIds.has(dbFile.id)) continue;
+
+          // For images stored in Volume, download and convert to base64
+          let base64Content: string | undefined;
+          if (
+            FileProcessor.isImageFile(dbFile.filename) &&
+            dbFile.storageType === 'volume' &&
+            dbFile.volumePath
+          ) {
+            const volumeStorage = getVolumeStorage();
+            if (volumeStorage) {
+              try {
+                const fileBuffer = await volumeStorage.downloadFile(
+                  dbFile.volumePath,
+                );
+                base64Content = fileBuffer.toString('base64');
+                console.log(
+                  `[Chat] Loaded image from Volume: ${dbFile.filename}`,
+                );
+              } catch (volumeErr) {
+                console.warn(
+                  `[Chat] Failed to load image from Volume: ${dbFile.volumePath}`,
+                  volumeErr,
+                );
+              }
+            }
+          }
+
+          // Add file to session memory
+          sessionMemory.addFile(id, dbFile.userId, dbFile.id, {
+            filename: dbFile.filename,
+            contentType: dbFile.contentType,
+            fileSize: dbFile.fileSize,
+            extractedContent: dbFile.extractedContent || '',
+            metadata: dbFile.metadata || {},
+            base64Content,
+          });
+        }
+      } catch (err) {
+        console.warn('[Chat] Failed to load files from database:', err);
+      }
+    }
+
     // Get file content parts for potential multimodal injection
+    console.log(`[Chat] Looking up files for chatId: ${id}`);
     const fileContentParts = sessionMemory.getFilesAsContentParts(id);
-    const imageContentParts = fileContentParts.filter(p => p.type === 'image');
+    // Filter for image file parts - using FilePart format with type: 'file' and image mediaType
+    const imageContentParts = fileContentParts.filter(
+      p => p.type === 'file' && p.mediaType?.startsWith('image/'),
+    );
     const _textContentParts = fileContentParts.filter(p => p.type === 'text');
     const hasImages = imageContentParts.length > 0;
+
+    // Debug: Log session files status for image troubleshooting
+    const sessionFiles = sessionMemory.getSessionFiles(id);
+    const imageFiles = sessionFiles.filter(sf =>
+      FileProcessor.isImageFile(sf.file.filename),
+    );
+    if (imageFiles.length > 0) {
+      console.log(
+        `[Chat] Found ${imageFiles.length} image file(s) in session:`,
+        imageFiles.map(sf => ({
+          filename: sf.file.filename,
+          hasBase64: !!sf.file.base64Content,
+          base64Length: sf.file.base64Content?.length || 0,
+          contentType: sf.file.contentType,
+        })),
+      );
+      console.log(
+        `[Chat] Converted to ${imageContentParts.length} image part(s) and ${_textContentParts.length} text part(s)`,
+      );
+    }
+
+    // Add OCR-focused system prompt when images are present
+    if (hasImages) {
+      systemMessages.push({
+        role: 'system',
+        content:
+          'When analyzing images containing text, carefully extract and transcribe all visible text content. Pay close attention to small text, headers, labels, and UI elements. If text is unclear, describe what you can see.',
+      });
+    }
 
     // Add file context for text-based files (includes both project files and chat-specific files)
     const allFileContext = sessionMemory.getContextString(id);
@@ -336,6 +425,37 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         console.log(
           `[Chat] Injected ${imageContentParts.length} image(s) into user message for vision model`,
         );
+
+        // Debug: Log the actual message structure after injection
+        const injectedMsg = messagesForModel[lastUserMsgIndex];
+        const injectedContent = injectedMsg.content;
+        console.log('[Chat] User message content after injection:', {
+          contentType: typeof injectedContent,
+          isArray: Array.isArray(injectedContent),
+          partCount: Array.isArray(injectedContent)
+            ? injectedContent.length
+            : 'N/A',
+          partTypes: Array.isArray(injectedContent)
+            ? injectedContent.map((p: { type: string }) => p.type)
+            : 'N/A',
+        });
+      }
+    }
+
+    // Debug: Log full message structure before streamText
+    console.log('[Chat] Messages for model (before streamText):');
+    for (const msg of messagesForModel) {
+      const content = msg.content;
+      if (Array.isArray(content)) {
+        console.log(`  ${msg.role}: ${content.length} parts - types: ${content.map((p: any) => p.type).join(', ')}`);
+        // Log image parts in detail
+        for (const part of content) {
+          if ((part as any).type === 'file') {
+            console.log(`    file part: mediaType=${(part as any).mediaType}, dataLength=${(part as any).data?.length || 0}`);
+          }
+        }
+      } else {
+        console.log(`  ${msg.role}: string content (${typeof content})`);
       }
     }
 

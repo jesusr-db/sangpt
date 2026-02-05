@@ -1,6 +1,10 @@
 bundle:
   name: databricks-chatbot
 
+sync:
+  include:
+    - patches/**
+
 variables:
   serving_endpoint_name:
     description: "Name of the model serving endpoint to be used by the app"
@@ -51,7 +55,7 @@ resources:
           - name: VOLUME_SCHEMA
             value: ${var.volume_schema}
           - name: VOLUME_NAME
-            value: ${resources.volumes.chatbot_files.name}
+            value: ${var.volume_name}-${var.resource_name_suffix}
           - name: DATABRICKS_SERVING_ENDPOINT
             value: ${var.serving_endpoint_name}
       resources:
@@ -69,7 +73,7 @@ resources:
         - name: volume
           description: "Unity Catalog volume for file storage"
           uc_securable:
-            securable_full_name: ${var.volume_catalog}.${var.volume_schema}.${resources.volumes.chatbot_files.name}
+            securable_full_name: ${var.volume_catalog}.${var.volume_schema}.${var.volume_name}-${var.resource_name_suffix}
             securable_type: VOLUME
             permission: WRITE_VOLUME
 

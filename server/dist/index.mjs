@@ -1,9 +1,9 @@
 import { n as isDatabaseAvailable } from "./connection-pool-Bhce9fke.mjs";
 import { r as getHostUrl } from "./src-BaHhVWSg.mjs";
 import { i as getCachedCliHost, o as getDatabricksToken, r as getAuthSession, t as getAuthMethod } from "./src-pe6ovBD5.mjs";
-import { A as updateChatLastContextById, C as getProjectFiles, D as saveChat, E as removeFileFromProject, F as generateUUID, I as ChatSDKError, M as updateProject, N as updateProjectContext, O as saveFileUpload, P as convertToUIMessages, S as getProjectContexts, T as removeChatFromProject, _ as getFileUploadById, a as addChatToProject, b as getMessagesByChatId, c as createProject, d as deleteMessagesByChatIdAfterTimestamp, f as deleteProject, g as getChatsByUserId, h as getChatsByProjectId, i as checkChatAccess, j as updateChatVisiblityById, k as saveMessages, l as deleteChatById, m as getChatById, n as postRequestBodySchema, o as addFileToProject, p as deleteProjectContext, r as StreamCache, s as addProjectContext, t as myProvider, u as deleteFileUpload, v as getFileUploadsByChatId, w as getProjectsByUserId, x as getProjectById, y as getMessageById } from "./src-qkQddNH6.mjs";
+import { A as updateChatLastContextById, C as getProjectFiles, D as saveChat, E as removeFileFromProject, F as generateUUID, I as ChatSDKError, M as updateProject, N as updateProjectContext, O as saveFileUpload, P as convertToUIMessages, S as getProjectContexts, T as removeChatFromProject, _ as getFileUploadById, a as addChatToProject, b as getMessagesByChatId, c as createProject, d as deleteMessagesByChatIdAfterTimestamp, f as deleteProject, g as getChatsByUserId, h as getChatsByProjectId, i as checkChatAccess, j as updateChatVisiblityById, k as saveMessages, l as deleteChatById, m as getChatById, n as postRequestBodySchema, o as addFileToProject, p as deleteProjectContext, r as StreamCache, s as addProjectContext, t as myProvider, u as deleteFileUpload, v as getFileUploadsByChatId, w as getProjectsByUserId, x as getProjectById, y as getMessageById } from "./src-CPfaeN6Y.mjs";
 import "./src-CqvC4Bjf.mjs";
-import { a as getDefaultFoundationModel, i as FOUNDATION_MODELS } from "./src-BIJIyhE4.mjs";
+import { a as getDefaultFoundationModel, i as FOUNDATION_MODELS } from "./src-C4zvqxEt.mjs";
 import { createRequire } from "node:module";
 import dotenv from "dotenv";
 import * as path$1 from "node:path";
@@ -13,10 +13,10 @@ import express, { Router } from "express";
 import cors from "cors";
 import { convertToModelMessages, createUIMessageStream, generateText, pipeUIMessageStreamToResponse, streamText } from "ai";
 import { z } from "zod";
-import { DATABRICKS_TOOL_CALL_ID, DATABRICKS_TOOL_DEFINITION, extractApprovalStatus } from "@databricks/ai-sdk-provider";
 import * as fs from "node:fs/promises";
-import fileUpload from "express-fileupload";
 import { createHash } from "node:crypto";
+import { DATABRICKS_TOOL_CALL_ID, DATABRICKS_TOOL_DEFINITION, extractApprovalStatus } from "@databricks/ai-sdk-provider";
+import fileUpload from "express-fileupload";
 import * as os from "node:os";
 
 //#region src/env.ts
@@ -210,8 +210,9 @@ var FileProcessor = class FileProcessor {
 	*/
 	static toContentParts(file) {
 		if (FileProcessor.isImageFile(file.filename) && file.base64Content) return [{
-			type: "image",
-			image: `data:${file.contentType};base64,${file.base64Content}`
+			type: "file",
+			data: `data:${file.contentType};base64,${file.base64Content}`,
+			mediaType: file.contentType
 		}];
 		return [{
 			type: "text",
@@ -229,6 +230,199 @@ var FileProcessor = class FileProcessor {
 		}
 	}
 };
+
+//#endregion
+//#region src/services/volume-storage.ts
+/**
+* Databricks Volume Storage Service
+*
+* Handles file storage in Databricks Unity Catalog Volumes using the Files API.
+* Volumes provide persistent, scalable storage for chat file attachments.
+*/
+/**
+* Get volume configuration from environment variables
+*/
+function getVolumeConfig() {
+	const catalog = process.env.VOLUME_CATALOG;
+	const schema = process.env.VOLUME_SCHEMA;
+	const volume = process.env.VOLUME_NAME;
+	if (!catalog || !schema || !volume) return null;
+	return {
+		catalog,
+		schema,
+		volume
+	};
+}
+/**
+* Check if volume storage is configured and available
+*/
+function isVolumeStorageAvailable() {
+	return getVolumeConfig() !== null;
+}
+/**
+* Get the Databricks host URL for API calls
+*/
+function getDatabricksHostUrl() {
+	if (getAuthMethod() === "cli") {
+		const cachedHost = getCachedCliHost();
+		if (cachedHost) return cachedHost;
+	}
+	return getHostUrl();
+}
+/**
+* Build the volume path for a file using the hierarchical directory structure:
+*
+* /Volumes/{catalog}/{schema}/{volume}/
+* ├── users/
+* │   └── {userId}/
+* │       ├── chats/
+* │       │   └── {chatId}/
+* │       │       └── {fileId}/
+* │       │           └── {filename}
+* │       └── orphan-files/           # Files not yet associated with a chat
+* │           └── {fileId}/
+* │               └── {filename}
+* ├── projects/
+* │   └── {projectId}/
+* │       └── files/
+* │           └── {fileId}/
+* │               └── {filename}
+* └── shared/
+*     └── templates/                  # Future: org-wide templates
+*/
+function buildVolumePath(config, options, filename) {
+	const { chatId, projectId, userId, fileId } = options;
+	const base = `/Volumes/${config.catalog}/${config.schema}/${config.volume}`;
+	if (projectId) return `${base}/projects/${projectId}/files/${fileId}/${filename}`;
+	if (chatId && userId) return `${base}/users/${userId}/chats/${chatId}/${fileId}/${filename}`;
+	if (chatId) return `${base}/chats/${chatId}/files/${fileId}/${filename}`;
+	if (userId) return `${base}/users/${userId}/orphan-files/${fileId}/${filename}`;
+	return `${base}/temp/${fileId}/${filename}`;
+}
+/**
+* Calculate SHA-256 checksum for integrity verification
+*/
+function calculateChecksum(buffer) {
+	return createHash("sha256").update(buffer).digest("hex");
+}
+/**
+* Databricks Volume Storage class
+*/
+var DatabricksVolumeStorage = class {
+	config;
+	constructor() {
+		const config = getVolumeConfig();
+		if (!config) throw new Error("Volume storage not configured. Set VOLUME_CATALOG, VOLUME_SCHEMA, and VOLUME_NAME environment variables.");
+		this.config = config;
+	}
+	/**
+	* Upload a file to Databricks Volume
+	*/
+	async uploadFile(buffer, filename, options) {
+		const volumePath = buildVolumePath(this.config, options, filename);
+		const checksum = calculateChecksum(buffer);
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}?overwrite=true`;
+		console.log(`[VolumeStorage] Uploading file to: ${volumePath}`);
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/octet-stream"
+			},
+			body: buffer
+		});
+		if (!response.ok) {
+			const errorText = await response.text();
+			throw new Error(`Failed to upload file to volume: ${response.status} ${errorText}`);
+		}
+		console.log(`[VolumeStorage] File uploaded successfully: ${volumePath} (${buffer.length} bytes)`);
+		return {
+			volumePath,
+			volumeCatalog: this.config.catalog,
+			volumeSchema: this.config.schema,
+			volumeName: this.config.volume,
+			checksum
+		};
+	}
+	/**
+	* Download a file from Databricks Volume
+	*/
+	async downloadFile(volumePath) {
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
+		console.log(`[VolumeStorage] Downloading file from: ${volumePath}`);
+		const response = await fetch(url, {
+			method: "GET",
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		if (!response.ok) {
+			const errorText = await response.text();
+			throw new Error(`Failed to download file from volume: ${response.status} ${errorText}`);
+		}
+		const arrayBuffer = await response.arrayBuffer();
+		const buffer = Buffer.from(arrayBuffer);
+		console.log(`[VolumeStorage] File downloaded successfully: ${volumePath} (${buffer.length} bytes)`);
+		return buffer;
+	}
+	/**
+	* Delete a file from Databricks Volume
+	*/
+	async deleteFile(volumePath) {
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
+		console.log(`[VolumeStorage] Deleting file: ${volumePath}`);
+		const response = await fetch(url, {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		if (!response.ok) {
+			const errorText = await response.text();
+			if (response.status !== 404) throw new Error(`Failed to delete file from volume: ${response.status} ${errorText}`);
+		}
+		console.log(`[VolumeStorage] File deleted successfully: ${volumePath}`);
+	}
+	/**
+	* Check if a file exists in the Volume
+	*/
+	async fileExists(volumePath) {
+		const hostUrl = getDatabricksHostUrl();
+		const token = await getDatabricksToken();
+		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
+		try {
+			return (await fetch(url, {
+				method: "HEAD",
+				headers: { Authorization: `Bearer ${token}` }
+			})).ok;
+		} catch {
+			return false;
+		}
+	}
+	/**
+	* Get the volume configuration
+	*/
+	getConfig() {
+		return { ...this.config };
+	}
+};
+/**
+* Get a singleton instance of the volume storage
+* Returns null if volume storage is not configured
+*/
+let volumeStorageInstance = null;
+function getVolumeStorage() {
+	if (!isVolumeStorageAvailable()) return null;
+	if (!volumeStorageInstance) try {
+		volumeStorageInstance = new DatabricksVolumeStorage();
+	} catch (error) {
+		console.warn("[VolumeStorage] Failed to initialize:", error);
+		return null;
+	}
+	return volumeStorageInstance;
+}
 
 //#endregion
 //#region src/services/session-memory.ts
@@ -691,10 +885,53 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 			role: "system",
 			content: `Project Context and Instructions:\n\n${projectContext}`
 		});
+		if (isDatabaseAvailable()) try {
+			const dbFiles = await getFileUploadsByChatId({ chatId: id });
+			const sessionFiles = sessionMemory$2.getSessionFiles(id);
+			const sessionFileIds = new Set(sessionFiles.map((sf) => sf.id));
+			for (const dbFile of dbFiles) {
+				if (sessionFileIds.has(dbFile.id)) continue;
+				let base64Content;
+				if (FileProcessor.isImageFile(dbFile.filename) && dbFile.storageType === "volume" && dbFile.volumePath) {
+					const volumeStorage = getVolumeStorage();
+					if (volumeStorage) try {
+						base64Content = (await volumeStorage.downloadFile(dbFile.volumePath)).toString("base64");
+						console.log(`[Chat] Loaded image from Volume: ${dbFile.filename}`);
+					} catch (volumeErr) {
+						console.warn(`[Chat] Failed to load image from Volume: ${dbFile.volumePath}`, volumeErr);
+					}
+				}
+				sessionMemory$2.addFile(id, dbFile.userId, dbFile.id, {
+					filename: dbFile.filename,
+					contentType: dbFile.contentType,
+					fileSize: dbFile.fileSize,
+					extractedContent: dbFile.extractedContent || "",
+					metadata: dbFile.metadata || {},
+					base64Content
+				});
+			}
+		} catch (err) {
+			console.warn("[Chat] Failed to load files from database:", err);
+		}
+		console.log(`[Chat] Looking up files for chatId: ${id}`);
 		const fileContentParts = sessionMemory$2.getFilesAsContentParts(id);
-		const imageContentParts = fileContentParts.filter((p) => p.type === "image");
-		fileContentParts.filter((p) => p.type === "text");
+		const imageContentParts = fileContentParts.filter((p) => p.type === "file" && p.mediaType?.startsWith("image/"));
+		const _textContentParts = fileContentParts.filter((p) => p.type === "text");
 		const hasImages = imageContentParts.length > 0;
+		const imageFiles = sessionMemory$2.getSessionFiles(id).filter((sf) => FileProcessor.isImageFile(sf.file.filename));
+		if (imageFiles.length > 0) {
+			console.log(`[Chat] Found ${imageFiles.length} image file(s) in session:`, imageFiles.map((sf) => ({
+				filename: sf.file.filename,
+				hasBase64: !!sf.file.base64Content,
+				base64Length: sf.file.base64Content?.length || 0,
+				contentType: sf.file.contentType
+			})));
+			console.log(`[Chat] Converted to ${imageContentParts.length} image part(s) and ${_textContentParts.length} text part(s)`);
+		}
+		if (hasImages) systemMessages.push({
+			role: "system",
+			content: "When analyzing images containing text, carefully extract and transcribe all visible text content. Pay close attention to small text, headers, labels, and UI elements. If text is unclear, describe what you can see."
+		});
 		const allFileContext = sessionMemory$2.getContextString(id);
 		if (allFileContext || projectFileContext) {
 			let fileMessage = "You have access to the following files:\n\n";
@@ -721,7 +958,22 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 					content: [...imageContentParts, ...existingContent]
 				};
 				console.log(`[Chat] Injected ${imageContentParts.length} image(s) into user message for vision model`);
+				const injectedContent = messagesForModel[lastUserMsgIndex].content;
+				console.log("[Chat] User message content after injection:", {
+					contentType: typeof injectedContent,
+					isArray: Array.isArray(injectedContent),
+					partCount: Array.isArray(injectedContent) ? injectedContent.length : "N/A",
+					partTypes: Array.isArray(injectedContent) ? injectedContent.map((p) => p.type) : "N/A"
+				});
 			}
+		}
+		console.log("[Chat] Messages for model (before streamText):");
+		for (const msg of messagesForModel) {
+			const content = msg.content;
+			if (Array.isArray(content)) {
+				console.log(`  ${msg.role}: ${content.length} parts - types: ${content.map((p) => p.type).join(", ")}`);
+				for (const part of content) if (part.type === "file") console.log(`    file part: mediaType=${part.mediaType}, dataLength=${part.data?.length || 0}`);
+			} else console.log(`  ${msg.role}: string content (${typeof content})`);
 		}
 		const result = streamText({
 			model: await myProvider.languageModel(selectedChatModel),
@@ -1014,178 +1266,6 @@ configRouter.get("/", (_req, res) => {
 });
 
 //#endregion
-//#region src/services/volume-storage.ts
-/**
-* Databricks Volume Storage Service
-*
-* Handles file storage in Databricks Unity Catalog Volumes using the Files API.
-* Volumes provide persistent, scalable storage for chat file attachments.
-*/
-/**
-* Get volume configuration from environment variables
-*/
-function getVolumeConfig() {
-	const catalog = process.env.VOLUME_CATALOG;
-	const schema = process.env.VOLUME_SCHEMA;
-	const volume = process.env.VOLUME_NAME;
-	if (!catalog || !schema || !volume) return null;
-	return {
-		catalog,
-		schema,
-		volume
-	};
-}
-/**
-* Check if volume storage is configured and available
-*/
-function isVolumeStorageAvailable() {
-	return getVolumeConfig() !== null;
-}
-/**
-* Get the Databricks host URL for API calls
-*/
-function getDatabricksHostUrl() {
-	if (getAuthMethod() === "cli") {
-		const cachedHost = getCachedCliHost();
-		if (cachedHost) return cachedHost;
-	}
-	return getHostUrl();
-}
-/**
-* Build the volume path for a file
-*/
-function buildVolumePath(config, options, filename) {
-	const { chatId, projectId, fileId } = options;
-	if (projectId) return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/projects/${projectId}/files/${fileId}/${filename}`;
-	if (chatId) return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/chats/${chatId}/files/${fileId}/${filename}`;
-	return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/temp/${fileId}/${filename}`;
-}
-/**
-* Calculate SHA-256 checksum for integrity verification
-*/
-function calculateChecksum(buffer) {
-	return createHash("sha256").update(buffer).digest("hex");
-}
-/**
-* Databricks Volume Storage class
-*/
-var DatabricksVolumeStorage = class {
-	config;
-	constructor() {
-		const config = getVolumeConfig();
-		if (!config) throw new Error("Volume storage not configured. Set VOLUME_CATALOG, VOLUME_SCHEMA, and VOLUME_NAME environment variables.");
-		this.config = config;
-	}
-	/**
-	* Upload a file to Databricks Volume
-	*/
-	async uploadFile(buffer, filename, options) {
-		const volumePath = buildVolumePath(this.config, options, filename);
-		const checksum = calculateChecksum(buffer);
-		const hostUrl = getDatabricksHostUrl();
-		const token = await getDatabricksToken();
-		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}?overwrite=true`;
-		console.log(`[VolumeStorage] Uploading file to: ${volumePath}`);
-		const response = await fetch(url, {
-			method: "PUT",
-			headers: {
-				Authorization: `Bearer ${token}`,
-				"Content-Type": "application/octet-stream"
-			},
-			body: buffer
-		});
-		if (!response.ok) {
-			const errorText = await response.text();
-			throw new Error(`Failed to upload file to volume: ${response.status} ${errorText}`);
-		}
-		console.log(`[VolumeStorage] File uploaded successfully: ${volumePath} (${buffer.length} bytes)`);
-		return {
-			volumePath,
-			volumeCatalog: this.config.catalog,
-			volumeSchema: this.config.schema,
-			volumeName: this.config.volume,
-			checksum
-		};
-	}
-	/**
-	* Download a file from Databricks Volume
-	*/
-	async downloadFile(volumePath) {
-		const hostUrl = getDatabricksHostUrl();
-		const token = await getDatabricksToken();
-		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
-		console.log(`[VolumeStorage] Downloading file from: ${volumePath}`);
-		const response = await fetch(url, {
-			method: "GET",
-			headers: { Authorization: `Bearer ${token}` }
-		});
-		if (!response.ok) {
-			const errorText = await response.text();
-			throw new Error(`Failed to download file from volume: ${response.status} ${errorText}`);
-		}
-		const arrayBuffer = await response.arrayBuffer();
-		const buffer = Buffer.from(arrayBuffer);
-		console.log(`[VolumeStorage] File downloaded successfully: ${volumePath} (${buffer.length} bytes)`);
-		return buffer;
-	}
-	/**
-	* Delete a file from Databricks Volume
-	*/
-	async deleteFile(volumePath) {
-		const hostUrl = getDatabricksHostUrl();
-		const token = await getDatabricksToken();
-		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
-		console.log(`[VolumeStorage] Deleting file: ${volumePath}`);
-		const response = await fetch(url, {
-			method: "DELETE",
-			headers: { Authorization: `Bearer ${token}` }
-		});
-		if (!response.ok) {
-			const errorText = await response.text();
-			if (response.status !== 404) throw new Error(`Failed to delete file from volume: ${response.status} ${errorText}`);
-		}
-		console.log(`[VolumeStorage] File deleted successfully: ${volumePath}`);
-	}
-	/**
-	* Check if a file exists in the Volume
-	*/
-	async fileExists(volumePath) {
-		const hostUrl = getDatabricksHostUrl();
-		const token = await getDatabricksToken();
-		const url = `${hostUrl}/api/2.0/fs/files/Volumes/${volumePath.replace("/Volumes/", "")}`;
-		try {
-			return (await fetch(url, {
-				method: "HEAD",
-				headers: { Authorization: `Bearer ${token}` }
-			})).ok;
-		} catch {
-			return false;
-		}
-	}
-	/**
-	* Get the volume configuration
-	*/
-	getConfig() {
-		return { ...this.config };
-	}
-};
-/**
-* Get a singleton instance of the volume storage
-* Returns null if volume storage is not configured
-*/
-let volumeStorageInstance = null;
-function getVolumeStorage() {
-	if (!isVolumeStorageAvailable()) return null;
-	if (!volumeStorageInstance) try {
-		volumeStorageInstance = new DatabricksVolumeStorage();
-	} catch (error) {
-		console.warn("[VolumeStorage] Failed to initialize:", error);
-		return null;
-	}
-	return volumeStorageInstance;
-}
-
-//#endregion
 //#region src/routes/files.ts
 const filesRouter = Router();
 filesRouter.use(fileUpload({
@@ -1224,6 +1304,13 @@ filesRouter.post("/upload", requireAuth, async (req, res) => {
 		const fileBuffer = await fs.readFile(uploadedFile.tempFilePath);
 		const processedFile = await FileProcessor.processFile(uploadedFile.tempFilePath, uploadedFile.name, uploadedFile.mimetype);
 		sessionMemory$1.addFile(chatId, userId, fileId, processedFile);
+		if (FileProcessor.isImageFile(processedFile.filename)) console.log(`[FileUpload] Image stored in session memory:`, {
+			chatId,
+			fileId,
+			filename: processedFile.filename,
+			hasBase64: !!processedFile.base64Content,
+			base64Length: processedFile.base64Content?.length || 0
+		});
 		let storageType = "memory";
 		let volumePath;
 		let volumeCatalog;
@@ -1235,6 +1322,7 @@ filesRouter.post("/upload", requireAuth, async (req, res) => {
 			const volumeResult = await volumeStorage.uploadFile(fileBuffer, uploadedFile.name, {
 				chatId,
 				projectId,
+				userId,
 				fileId
 			});
 			volumePath = volumeResult.volumePath;
@@ -1249,7 +1337,7 @@ filesRouter.post("/upload", requireAuth, async (req, res) => {
 		}
 		else console.log("[FileUpload] Volume storage not configured, using memory storage");
 		if (isDatabaseAvailable()) try {
-			const { checkChatAccess: checkChatAccess$1 } = await import("./src-NJY5VbwO.mjs");
+			const { checkChatAccess: checkChatAccess$1 } = await import("./src-CLzfeF5v.mjs");
 			const { chat } = await checkChatAccess$1(chatId, userId);
 			if (chat) await saveFileUpload({
 				id: fileId,
@@ -1658,23 +1746,48 @@ projectsRouter.post("/:id/upload", requireAuth, async (req, res) => {
 		const fileArray = Array.isArray(req.files.file) ? req.files.file : [req.files.file];
 		for (const file of fileArray) try {
 			const tempPath = file.tempFilePath;
-			const processedFile = await FileProcessor.processFile({
-				filename: file.name,
-				contentType: file.mimetype,
-				buffer: file.data,
-				filePath: tempPath
-			});
+			const processedFile = await FileProcessor.processFile(tempPath, file.name, file.mimetype);
 			const fileId = generateUUID();
+			const fileBuffer = await fs.readFile(tempPath);
+			let storageType = "memory";
+			let volumePath;
+			let volumeCatalog;
+			let volumeSchema;
+			let volumeName;
+			let fileChecksum;
+			const volumeStorage = getVolumeStorage();
+			if (volumeStorage) try {
+				const volumeResult = await volumeStorage.uploadFile(fileBuffer, file.name, {
+					projectId,
+					fileId
+				});
+				volumePath = volumeResult.volumePath;
+				volumeCatalog = volumeResult.volumeCatalog;
+				volumeSchema = volumeResult.volumeSchema;
+				volumeName = volumeResult.volumeName;
+				fileChecksum = volumeResult.checksum;
+				storageType = "volume";
+				console.log(`[Projects] File uploaded to volume: ${volumePath}`);
+			} catch (volumeError) {
+				console.warn("[Projects] Volume upload failed, falling back to memory storage:", volumeError);
+			}
+			else console.log("[Projects] Volume storage not configured, using memory storage");
 			if (isDatabaseAvailable()) {
 				await saveFileUpload({
 					id: fileId,
+					chatId: null,
+					userId,
 					filename: file.name,
 					contentType: file.mimetype,
 					fileSize: file.size,
 					extractedContent: processedFile.extractedContent,
 					metadata: processedFile.metadata,
-					projectId,
-					userId
+					volumePath,
+					volumeCatalog,
+					volumeSchema,
+					volumeName,
+					storageType,
+					fileChecksum
 				});
 				await addFileToProject({
 					projectId,
@@ -1697,10 +1810,11 @@ projectsRouter.post("/:id/upload", requireAuth, async (req, res) => {
 				contentType: file.mimetype,
 				fileSize: file.size,
 				extractedContent: processedFile.extractedContent,
-				projectId
+				projectId,
+				storageType
 			});
 			if (tempPath) try {
-				await (await import("node:fs/promises")).unlink(tempPath);
+				await fs.unlink(tempPath);
 			} catch (err) {
 				console.warn("Failed to clean up temp file:", err);
 			}

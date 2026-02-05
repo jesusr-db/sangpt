@@ -93,6 +93,17 @@ filesRouter.post(
       // Store in session memory (always available as fallback)
       sessionMemory.addFile(chatId, userId!, fileId, processedFile);
 
+      // Debug logging for image uploads
+      if (FileProcessor.isImageFile(processedFile.filename)) {
+        console.log(`[FileUpload] Image stored in session memory:`, {
+          chatId,
+          fileId,
+          filename: processedFile.filename,
+          hasBase64: !!processedFile.base64Content,
+          base64Length: processedFile.base64Content?.length || 0,
+        });
+      }
+
       // Track storage type and volume info
       let storageType: 'volume' | 'memory' = 'memory';
       let volumePath: string | undefined;
@@ -108,7 +119,7 @@ filesRouter.post(
           const volumeResult = await volumeStorage.uploadFile(
             fileBuffer,
             uploadedFile.name,
-            { chatId, projectId, fileId },
+            { chatId, projectId, userId, fileId },
           );
 
           volumePath = volumeResult.volumePath;

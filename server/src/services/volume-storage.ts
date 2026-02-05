@@ -30,6 +30,7 @@ export interface VolumeFile {
 export interface UploadOptions {
   chatId?: string;
   projectId?: string;
+  userId?: string;
   fileId: string;
 }
 
@@ -72,26 +73,56 @@ function getDatabricksHostUrl(): string {
 }
 
 /**
- * Build the volume path for a file
+ * Build the volume path for a file using the hierarchical directory structure:
+ *
+ * /Volumes/{catalog}/{schema}/{volume}/
+ * ├── users/
+ * │   └── {userId}/
+ * │       ├── chats/
+ * │       │   └── {chatId}/
+ * │       │       └── {fileId}/
+ * │       │           └── {filename}
+ * │       └── orphan-files/           # Files not yet associated with a chat
+ * │           └── {fileId}/
+ * │               └── {filename}
+ * ├── projects/
+ * │   └── {projectId}/
+ * │       └── files/
+ * │           └── {fileId}/
+ * │               └── {filename}
+ * └── shared/
+ *     └── templates/                  # Future: org-wide templates
  */
 function buildVolumePath(
   config: VolumeConfig,
   options: UploadOptions,
   filename: string,
 ): string {
-  const { chatId, projectId, fileId } = options;
+  const { chatId, projectId, userId, fileId } = options;
+  const base = `/Volumes/${config.catalog}/${config.schema}/${config.volume}`;
 
-  // Organize by project or chat
+  // Project file - shared across project chats
   if (projectId) {
-    return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/projects/${projectId}/files/${fileId}/${filename}`;
+    return `${base}/projects/${projectId}/files/${fileId}/${filename}`;
   }
 
+  // Chat-specific file with user scoping
+  if (chatId && userId) {
+    return `${base}/users/${userId}/chats/${chatId}/${fileId}/${filename}`;
+  }
+
+  // Chat file without user (backwards compatibility)
   if (chatId) {
-    return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/chats/${chatId}/files/${fileId}/${filename}`;
+    return `${base}/chats/${chatId}/files/${fileId}/${filename}`;
   }
 
-  // Fallback to temp storage
-  return `/Volumes/${config.catalog}/${config.schema}/${config.volume}/temp/${fileId}/${filename}`;
+  // Orphan file (not yet associated with chat, but has user)
+  if (userId) {
+    return `${base}/users/${userId}/orphan-files/${fileId}/${filename}`;
+  }
+
+  // Fallback to temp storage (no context available)
+  return `${base}/temp/${fileId}/${filename}`;
 }
 
 /**

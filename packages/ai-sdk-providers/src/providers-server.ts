@@ -71,23 +71,60 @@ async function getWorkspaceHostname(): Promise<string> {
 // Environment variable to enable SSE logging
 const LOG_SSE_EVENTS = process.env.LOG_SSE_EVENTS === 'true';
 
+// Transform image content parts from SDK format to Databricks FMAPI format
+// SDK format: {type: "image", image_url: "data:..."}
+// Databricks format: {type: "image_url", image_url: {url: "data:..."}}
+function transformImageContent(body: any): any {
+  if (!body?.messages) return body;
+
+  const transformedMessages = body.messages.map((msg: any) => {
+    if (!msg.content || !Array.isArray(msg.content)) return msg;
+
+    const transformedContent = msg.content.map((part: any) => {
+      // Transform SDK image format to Databricks FMAPI format
+      if (part.type === 'image' && typeof part.image_url === 'string') {
+        return {
+          type: 'image_url',
+          image_url: { url: part.image_url },
+        };
+      }
+      return part;
+    });
+
+    return { ...msg, content: transformedContent };
+  });
+
+  return { ...body, messages: transformedMessages };
+}
+
 // Custom fetch function to transform Databricks responses to OpenAI format
 export const databricksFetch: typeof fetch = async (input, init) => {
   const url = input.toString();
 
-  // Log the request being sent to Databricks
+  // Transform request body to fix image format for vision models
+  let transformedInit = init;
   if (init?.body) {
     try {
       const requestBody =
         typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+
+      // Transform image content to Databricks FMAPI format
+      const transformedBody = transformImageContent(requestBody);
+
       console.log(
         'Databricks request:',
         JSON.stringify({
           url,
           method: init.method || 'POST',
-          body: requestBody,
+          body: transformedBody,
         }),
       );
+
+      // Update init with transformed body
+      transformedInit = {
+        ...init,
+        body: JSON.stringify(transformedBody),
+      };
     } catch (_e) {
       console.log('Databricks request (raw):', {
         url,
@@ -97,7 +134,7 @@ export const databricksFetch: typeof fetch = async (input, init) => {
     }
   }
 
-  const response = await fetch(url, init);
+  const response = await fetch(url, transformedInit);
 
   // If SSE logging is enabled and this is a streaming response, wrap the body to log events
   if (LOG_SSE_EVENTS && response.body) {

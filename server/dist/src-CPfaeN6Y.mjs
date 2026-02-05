@@ -1120,7 +1120,7 @@ const postRequestBodySchema = z.object({
 //#endregion
 //#region ../packages/core/src/ai/providers.ts
 async function getServerProvider() {
-	const { getDatabricksServerProvider } = await import("./src-DjE_7B9M.mjs");
+	const { getDatabricksServerProvider } = await import("./src-CH8T0Bys.mjs");
 	return getDatabricksServerProvider();
 }
 let cachedServerProvider = null;

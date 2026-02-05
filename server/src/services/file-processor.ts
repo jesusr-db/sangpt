@@ -1,14 +1,14 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { FileUpload } from '@chat-template/db';
-import type { ImagePart, TextPart } from 'ai';
+import type { FilePart, TextPart } from 'ai';
 import { createRequire } from 'node:module';
 
 // pdf-parse is a CommonJS module, use createRequire for ESM compatibility
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 
-export type FileContentPart = ImagePart | TextPart;
+export type FileContentPart = FilePart | TextPart;
 
 export interface ProcessedFile {
   filename: string;
@@ -204,12 +204,14 @@ export class FileProcessor {
    * All other files are returned as text parts with their extracted content.
    */
   static toContentParts(file: ProcessedFile): FileContentPart[] {
-    // If it's an image with base64 content, return as image part for vision models
+    // If it's an image with base64 content, return as FilePart
+    // The Databricks provider will convert this to the FMAPI format
     if (FileProcessor.isImageFile(file.filename) && file.base64Content) {
       return [
         {
-          type: 'image',
-          image: `data:${file.contentType};base64,${file.base64Content}`,
+          type: 'file',
+          data: `data:${file.contentType};base64,${file.base64Content}`,
+          mediaType: file.contentType,
         },
       ];
     }
