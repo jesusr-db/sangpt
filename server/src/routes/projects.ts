@@ -273,7 +273,13 @@ projectsRouter.post('/:id/files', requireAuth, async (req, res) => {
 projectsRouter.get('/:id/files', requireAuth, async (req, res) => {
   try {
     const files = await getProjectFiles({ projectId: req.params.id });
-    res.json(files);
+    // Add contentLength for token estimation in UI
+    const filesWithContentLength = files.map(file => ({
+      ...file,
+      contentLength: file.extractedContent?.length || 0,
+      isImage: file.contentType?.startsWith('image/') || false,
+    }));
+    res.json(filesWithContentLength);
   } catch (_error) {
     res.status(500).json({ error: 'Failed to fetch project files' });
   }
@@ -305,8 +311,8 @@ projectsRouter.post('/:id/upload', requireAuth, async (req, res) => {
     const userId = req.session?.user.id;
 
     // Verify project exists and user has access
-    const project = await getProjectById(projectId);
-    if (!project || project.userId !== userId) {
+    const project = await getProjectById({ id: projectId, userId });
+    if (!project) {
       const error = new ChatSDKError('forbidden:project', 'Access denied to project');
       const response = error.toResponse();
       return res.status(response.status).json(response.json);

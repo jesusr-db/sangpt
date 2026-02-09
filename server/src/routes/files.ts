@@ -93,17 +93,6 @@ filesRouter.post(
       // Store in session memory (always available as fallback)
       sessionMemory.addFile(chatId, userId!, fileId, processedFile);
 
-      // Debug logging for image uploads
-      if (FileProcessor.isImageFile(processedFile.filename)) {
-        console.log(`[FileUpload] Image stored in session memory:`, {
-          chatId,
-          fileId,
-          filename: processedFile.filename,
-          hasBase64: !!processedFile.base64Content,
-          base64Length: processedFile.base64Content?.length || 0,
-        });
-      }
-
       // Track storage type and volume info
       let storageType: 'volume' | 'memory' = 'memory';
       let volumePath: string | undefined;
@@ -193,7 +182,7 @@ filesRouter.post(
         fileSize: processedFile.fileSize,
         metadata: processedFile.metadata,
         hasContent: !!processedFile.extractedContent,
-        isImage: FileProcessor.isImageFile(processedFile.filename),
+        isImage: false,
         storageType,
       });
     } catch (error) {
@@ -240,7 +229,8 @@ filesRouter.get(
           metadata: file.metadata,
           uploadedAt: file.createdAt,
           hasContent: !!file.extractedContent,
-          isImage: FileProcessor.isImageFile(file.filename),
+          contentLength: file.extractedContent?.length || 0,
+          isImage: file.contentType.startsWith('image/'),
           storageType: file.storageType || 'memory',
           canDownload: file.storageType === 'volume' && !!file.volumePath,
         });
@@ -256,7 +246,8 @@ filesRouter.get(
           metadata: sessionFile.file.metadata,
           uploadedAt: sessionFile.uploadedAt,
           hasContent: !!sessionFile.file.extractedContent,
-          isImage: FileProcessor.isImageFile(sessionFile.file.filename),
+          contentLength: sessionFile.file.extractedContent?.length || 0,
+          isImage: sessionFile.file.contentType.startsWith('image/'),
           storageType: 'memory', // Session files are always in memory
           canDownload: false,
         });

@@ -1,22 +1,23 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { FileUpload } from '@chat-template/db';
-import type { FilePart, TextPart } from 'ai';
+import type { TextPart } from 'ai';
 import { createRequire } from 'node:module';
 
 // pdf-parse is a CommonJS module, use createRequire for ESM compatibility
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 
-export type FileContentPart = FilePart | TextPart;
+export type FileContentPart = TextPart;
 
 export interface ProcessedFile {
+  id?: string;
   filename: string;
   contentType: string;
   fileSize: number;
   extractedContent: string;
   metadata: Record<string, any>;
-  base64Content?: string; // For images
+  createdAt?: Date;
 }
 
 export class FileProcessor {
@@ -31,9 +32,6 @@ export class FileProcessor {
     '.tsx',
     '.json',
     '.csv',
-    '.jpg',
-    '.jpeg',
-    '.png',
     '.pdf',
     '.docx',
   ];
@@ -66,7 +64,6 @@ export class FileProcessor {
       originalSize: stats.size,
       processedAt: new Date().toISOString(),
     };
-    let base64Content: string | undefined;
 
     switch (fileExtension) {
       // Text and code files
@@ -82,18 +79,6 @@ export class FileProcessor {
         extractedContent = await fs.readFile(filePath, 'utf-8');
         metadata.lineCount = extractedContent.split('\n').length;
         break;
-
-      // Images
-      case '.jpg':
-      case '.jpeg':
-      case '.png': {
-        const imageBuffer = await fs.readFile(filePath);
-        base64Content = imageBuffer.toString('base64');
-        extractedContent = `[Image: ${originalName}]`;
-        metadata.isImage = true;
-        metadata.base64Size = base64Content.length;
-        break;
-      }
 
       // PDF files
       case '.pdf':
@@ -164,7 +149,6 @@ export class FileProcessor {
       fileSize: stats.size,
       extractedContent,
       metadata,
-      base64Content,
     };
   }
 
@@ -191,32 +175,10 @@ export class FileProcessor {
   }
 
   /**
-   * Check if file type supports vision models
-   */
-  static isImageFile(filename: string): boolean {
-    const ext = path.extname(filename).toLowerCase();
-    return ['.jpg', '.jpeg', '.png'].includes(ext);
-  }
-
-  /**
-   * Convert a ProcessedFile to AI SDK content parts for multimodal models.
-   * Images with base64 data are returned as image parts for vision models.
-   * All other files are returned as text parts with their extracted content.
+   * Convert a ProcessedFile to AI SDK content parts.
+   * Returns file content as a text part for inclusion in chat context.
    */
   static toContentParts(file: ProcessedFile): FileContentPart[] {
-    // If it's an image with base64 content, return as FilePart
-    // The Databricks provider will convert this to the FMAPI format
-    if (FileProcessor.isImageFile(file.filename) && file.base64Content) {
-      return [
-        {
-          type: 'file',
-          data: `data:${file.contentType};base64,${file.base64Content}`,
-          mediaType: file.contentType,
-        },
-      ];
-    }
-
-    // For all other files, return as text part with extracted content
     return [
       {
         type: 'text',

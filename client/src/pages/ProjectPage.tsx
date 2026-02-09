@@ -10,6 +10,7 @@ import {
   MessageSquareIcon,
   Settings2Icon,
   ChevronLeftIcon,
+  Paperclip,
 } from 'lucide-react';
 import type { Project, ProjectContext as ProjectContextType } from '@chat-template/db';
 import { fetcher } from '@/lib/utils';
@@ -17,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ProjectChats } from '@/components/project-chats';
 import { ProjectManagerDialog } from '@/components/project-manager';
+import { ProjectFiles } from '@/components/project-files';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useProject } from '@/hooks/use-project';
@@ -172,6 +174,10 @@ export default function ProjectPage() {
               <MessageSquareIcon className="mr-2 h-4 w-4" />
               Chats
             </TabsTrigger>
+            <TabsTrigger value="files">
+              <Paperclip className="mr-2 h-4 w-4" />
+              Files
+            </TabsTrigger>
             <TabsTrigger value="context">
               <FileIcon className="mr-2 h-4 w-4" />
               Context
@@ -184,6 +190,10 @@ export default function ProjectPage() {
 
           <TabsContent value="chats" className="h-full">
             <ProjectChats projectId={id!} />
+          </TabsContent>
+
+          <TabsContent value="files" className="p-4">
+            <ProjectFiles projectId={id!} />
           </TabsContent>
 
           <TabsContent value="context" className='space-y-4 p-4'>

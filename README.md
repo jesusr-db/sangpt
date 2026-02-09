@@ -387,9 +387,9 @@ The application includes a comprehensive projects feature for organizing chats a
 - ✅ **Project Overview**: Dedicated pages for managing project chats and settings
 
 ### Planned Improvements
-- 🚧 **Databricks Volumes Integration**: Migrate file storage from database to Databricks Volumes for better scalability and performance (see [detailed migration plan](docs/databricks-volumes-migration.md))
 - 📋 **Project Templates**: Pre-configured projects with context for common use cases
 - 🔄 **Shared Files**: Upload files at project level that are available to all chats
+- 🔧 **MCP Tool Capabilities**: Enable AI to use external tools for research and real-time information
 - 📊 **Project Analytics**: Track token usage and costs per project
 - 👥 **Team Collaboration**: Share projects with team members (future)
 

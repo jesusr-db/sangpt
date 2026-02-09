@@ -29,8 +29,6 @@ import {
   getProjectFiles,
   getFileUploadsByChatId,
 } from '@chat-template/db';
-import { FileProcessor } from '../services/file-processor';
-import { getVolumeStorage } from '../services/volume-storage';
 import {
   type ChatMessage,
   checkChatAccess,
@@ -90,12 +88,14 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       selectedChatModel,
       selectedVisibilityType,
       projectId,
+      enabledFileIds,
     }: {
       id: string;
       message?: ChatMessage;
       selectedChatModel: string;
       selectedVisibilityType: VisibilityType;
       projectId?: string | null;
+      enabledFileIds?: string[];
     } = requestBody;
 
     const session = req.session;
@@ -244,8 +244,13 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         // Fetch project files from database
         const projectFiles = await getProjectFiles({ projectId: chat.projectId });
         if (projectFiles.length > 0) {
-          // Add project files to project context in session memory
-          for (const file of projectFiles) {
+          // Filter by enabled file IDs if provided
+          const enabledProjectFiles = enabledFileIds
+            ? projectFiles.filter(f => enabledFileIds.includes(f.id))
+            : projectFiles;
+
+          // Add enabled project files to project context in session memory
+          for (const file of enabledProjectFiles) {
             sessionMemory.addProjectFile(chat.projectId, file.id, {
               id: file.id,
               filename: file.filename,
@@ -257,9 +262,13 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
             });
           }
 
-          projectFileContext = projectFiles
+          projectFileContext = enabledProjectFiles
             .map(f => `- ${f.filename} (${f.contentType}, ${f.fileSize} bytes)`)
             .join('\n');
+
+          if (enabledFileIds && enabledProjectFiles.length < projectFiles.length) {
+            console.log(`[Chat] Filtered project files: ${enabledProjectFiles.length}/${projectFiles.length} enabled`);
+          }
         }
       } catch (error) {
         console.warn('Failed to fetch project context:', error);
@@ -283,38 +292,18 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     if (isDatabaseAvailable()) {
       try {
         const dbFiles = await getFileUploadsByChatId({ chatId: id });
+
+        // Filter by enabled file IDs if provided
+        const enabledDbFiles = enabledFileIds
+          ? dbFiles.filter(f => enabledFileIds.includes(f.id))
+          : dbFiles;
+
         const sessionFiles = sessionMemory.getSessionFiles(id);
         const sessionFileIds = new Set(sessionFiles.map(sf => sf.id));
 
-        for (const dbFile of dbFiles) {
+        for (const dbFile of enabledDbFiles) {
           // Skip if already in session memory
           if (sessionFileIds.has(dbFile.id)) continue;
-
-          // For images stored in Volume, download and convert to base64
-          let base64Content: string | undefined;
-          if (
-            FileProcessor.isImageFile(dbFile.filename) &&
-            dbFile.storageType === 'volume' &&
-            dbFile.volumePath
-          ) {
-            const volumeStorage = getVolumeStorage();
-            if (volumeStorage) {
-              try {
-                const fileBuffer = await volumeStorage.downloadFile(
-                  dbFile.volumePath,
-                );
-                base64Content = fileBuffer.toString('base64');
-                console.log(
-                  `[Chat] Loaded image from Volume: ${dbFile.filename}`,
-                );
-              } catch (volumeErr) {
-                console.warn(
-                  `[Chat] Failed to load image from Volume: ${dbFile.volumePath}`,
-                  volumeErr,
-                );
-              }
-            }
-          }
 
           // Add file to session memory
           sessionMemory.addFile(id, dbFile.userId, dbFile.id, {
@@ -323,54 +312,19 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
             fileSize: dbFile.fileSize,
             extractedContent: dbFile.extractedContent || '',
             metadata: dbFile.metadata || {},
-            base64Content,
           });
+        }
+
+        if (enabledFileIds && enabledDbFiles.length < dbFiles.length) {
+          console.log(`[Chat] Filtered chat files: ${enabledDbFiles.length}/${dbFiles.length} enabled`);
         }
       } catch (err) {
         console.warn('[Chat] Failed to load files from database:', err);
       }
     }
 
-    // Get file content parts for potential multimodal injection
-    console.log(`[Chat] Looking up files for chatId: ${id}`);
-    const fileContentParts = sessionMemory.getFilesAsContentParts(id);
-    // Filter for image file parts - using FilePart format with type: 'file' and image mediaType
-    const imageContentParts = fileContentParts.filter(
-      p => p.type === 'file' && p.mediaType?.startsWith('image/'),
-    );
-    const _textContentParts = fileContentParts.filter(p => p.type === 'text');
-    const hasImages = imageContentParts.length > 0;
-
-    // Debug: Log session files status for image troubleshooting
-    const sessionFiles = sessionMemory.getSessionFiles(id);
-    const imageFiles = sessionFiles.filter(sf =>
-      FileProcessor.isImageFile(sf.file.filename),
-    );
-    if (imageFiles.length > 0) {
-      console.log(
-        `[Chat] Found ${imageFiles.length} image file(s) in session:`,
-        imageFiles.map(sf => ({
-          filename: sf.file.filename,
-          hasBase64: !!sf.file.base64Content,
-          base64Length: sf.file.base64Content?.length || 0,
-          contentType: sf.file.contentType,
-        })),
-      );
-      console.log(
-        `[Chat] Converted to ${imageContentParts.length} image part(s) and ${_textContentParts.length} text part(s)`,
-      );
-    }
-
-    // Add OCR-focused system prompt when images are present
-    if (hasImages) {
-      systemMessages.push({
-        role: 'system',
-        content:
-          'When analyzing images containing text, carefully extract and transcribe all visible text content. Pay close attention to small text, headers, labels, and UI elements. If text is unclear, describe what you can see.',
-      });
-    }
-
     // Add file context for text-based files (includes both project files and chat-specific files)
+    console.log(`[Chat] Looking up files for chatId: ${id}`);
     const allFileContext = sessionMemory.getContextString(id);
     if (allFileContext || projectFileContext) {
       let fileMessage = 'You have access to the following files:\n\n';
@@ -396,68 +350,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       messagesForModel = [...systemMessages, ...messagesForModel];
     }
 
-    // Inject image content parts into the last user message for vision models
-    // This allows models that support vision to actually see uploaded images
-    if (hasImages) {
-      // Find the last user message
-      const lastUserMsgIndex = messagesForModel.findLastIndex(
-        m => m.role === 'user',
-      );
-
-      if (lastUserMsgIndex !== -1) {
-        const lastUserMsg = messagesForModel[lastUserMsgIndex];
-        const currentContent = lastUserMsg.content;
-
-        // Convert current content to array format if it's a string
-        const existingContent =
-          typeof currentContent === 'string'
-            ? [{ type: 'text' as const, text: currentContent }]
-            : Array.isArray(currentContent)
-              ? currentContent
-              : [];
-
-        // Create new message with images prepended
-        messagesForModel[lastUserMsgIndex] = {
-          ...lastUserMsg,
-          content: [...imageContentParts, ...existingContent],
-        };
-
-        console.log(
-          `[Chat] Injected ${imageContentParts.length} image(s) into user message for vision model`,
-        );
-
-        // Debug: Log the actual message structure after injection
-        const injectedMsg = messagesForModel[lastUserMsgIndex];
-        const injectedContent = injectedMsg.content;
-        console.log('[Chat] User message content after injection:', {
-          contentType: typeof injectedContent,
-          isArray: Array.isArray(injectedContent),
-          partCount: Array.isArray(injectedContent)
-            ? injectedContent.length
-            : 'N/A',
-          partTypes: Array.isArray(injectedContent)
-            ? injectedContent.map((p: { type: string }) => p.type)
-            : 'N/A',
-        });
-      }
-    }
-
-    // Debug: Log full message structure before streamText
-    console.log('[Chat] Messages for model (before streamText):');
-    for (const msg of messagesForModel) {
-      const content = msg.content;
-      if (Array.isArray(content)) {
-        console.log(`  ${msg.role}: ${content.length} parts - types: ${content.map((p: any) => p.type).join(', ')}`);
-        // Log image parts in detail
-        for (const part of content) {
-          if ((part as any).type === 'file') {
-            console.log(`    file part: mediaType=${(part as any).mediaType}, dataLength=${(part as any).data?.length || 0}`);
-          }
-        }
-      } else {
-        console.log(`  ${msg.role}: string content (${typeof content})`);
-      }
-    }
+    console.log(`[Chat] Sending ${messagesForModel.length} messages to model`);
 
     const model = await myProvider.languageModel(selectedChatModel);
     const result = streamText({

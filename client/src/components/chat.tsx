@@ -9,6 +9,7 @@ import { Messages } from './messages';
 import { FileUploadArea, type UploadedFile } from './file-upload-area';
 import { FileContextManager } from './file-context-manager';
 import { ProjectContextIndicator } from './project-context-indicator';
+import { ChatFileToggle } from './chat-file-toggle';
 import type {
   Attachment,
   ChatMessage,
@@ -62,6 +63,7 @@ export function Chat({
     initialLastContext,
   );
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [enabledFileIds, setEnabledFileIds] = useState<string[]>([]);
 
   // Load existing files for this chat
   useEffect(() => {
@@ -167,6 +169,8 @@ export function Chat({
             selectedChatModel: selectedModel || initialChatModel,
             selectedVisibilityType: visibilityType,
             projectId: currentProject?.id || null,
+            // Pass enabled file IDs to control which files are included in context
+            enabledFileIds: enabledFileIds.length > 0 ? enabledFileIds : undefined,
             nextMessageId: generateUUID(),
             // Send previous messages when:
             // 1. Database is disabled (ephemeral mode) - always need client-side messages
@@ -345,11 +349,21 @@ export function Chat({
                 />
               )}
 
+              {/* File Toggle - allows toggling files on/off for context */}
+              <ChatFileToggle
+                chatId={id}
+                projectId={projectId}
+                onToggleChange={setEnabledFileIds}
+                className="mb-2 rounded-lg border bg-muted/30 p-2"
+              />
+
               {/* File Upload Area - collapsible */}
               <FileUploadArea
                 chatId={id}
                 onFileUploaded={(file) => {
                   setUploadedFiles(prev => [...prev, file]);
+                  // Auto-enable newly uploaded files
+                  setEnabledFileIds(prev => [...prev, file.id]);
                 }}
                 disabled={status === 'submitting'}
                 className="mb-2"

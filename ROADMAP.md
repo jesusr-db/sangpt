@@ -25,6 +25,7 @@
 ### Phase 4: Shared Files & Context
 - [x] Extend SessionMemory for project-level file storage
 - [ ] Project file management UI
+- [ ] **File toggle for conversations** - Enable/disable individual files per chat to save tokens
 - [x] Context inheritance for new chats
 - [ ] Project templates
 
@@ -68,154 +69,76 @@ Enable the AI model to use MCP (Model Context Protocol) tools for gathering rece
    - Web search and news (via external MCP servers)
    - Web content fetching and analysis
    - Enterprise data access through Unity Catalog
+   - **Vector Search** - Query Databricks Vector Search indexes for RAG
    - Custom MCP servers for specific needs
+
+5. **Vector Search Integration**
+   ```typescript
+   // Tool definition for vector search
+   const vectorSearchTool = {
+     name: 'search_knowledge_base',
+     description: 'Search vector index for relevant documents',
+     parameters: {
+       query: z.string().describe('Search query'),
+       index_name: z.string().describe('Vector search index name'),
+       num_results: z.number().default(5),
+       filters: z.record(z.any()).optional(),
+     },
+     execute: async ({ query, index_name, num_results, filters }) => {
+       // Call Databricks Vector Search API
+       const response = await fetch(`${host}/api/2.0/vector-search/indexes/${index_name}/query`, {
+         method: 'POST',
+         body: JSON.stringify({ query_text: query, num_results, filters }),
+       });
+       return response.json();
+     },
+   };
+   ```
 
 #### Benefits
 - Real-time information access
 - Enhanced research capabilities
 - Integration with enterprise data sources
+- **RAG over large document collections** via Vector Search
 - Extensible through Unity Catalog connections
 
 #### Implementation Timeline
 - Databricks MCP client setup (2-3 hours)
 - Tool integration and conversion (3-4 hours)
 - External MCP configuration (2-3 hours)
+- Vector Search tool implementation (2-3 hours)
 - Testing and documentation (2-3 hours)
-- **Total**: 1-2 days
+- **Total**: 2-3 days
 
-### Phase 6: File Storage Migration to Databricks Volumes
-**Priority: HIGH** - Improve scalability and performance
-
-#### Current State
-- Files stored as base64/text in PostgreSQL database
-- `storagePath` field exists but unused
-- Large files increase database size significantly
-- Base64 encoding adds ~33% overhead for images
-
-#### Target Architecture
-```
-┌─────────────────┐
-│   PostgreSQL    │
-│   Database      │
-│ ┌─────────────┐ │
-│ │ FileUpload  │ │
-│ │ - id        │ │
-│ │ - filename  │ │
-│ │ - volumePath│ │──────┐
-│ │ - metadata  │ │      │
-│ └─────────────┘ │      │
-└─────────────────┘      │
-                         ▼
-              ┌──────────────────┐
-              │ Databricks       │
-              │ Volumes          │
-              │ ┌──────────────┐ │
-              │ │ /projects/    │ │
-              │ │   /{project}/ │ │
-              │ │     /files/   │ │
-              │ │       /{id}   │ │
-              │ └──────────────┘ │
-              └──────────────────┘
-```
-
-#### Implementation Plan
-
-1. **Database Schema Updates**
-   ```sql
-   ALTER TABLE "FileUpload"
-   ADD COLUMN volume_path TEXT,
-   ADD COLUMN volume_name TEXT DEFAULT 'project-files',
-   ADD COLUMN storage_type VARCHAR DEFAULT 'database';
-
-   -- Migrate existing storagePath to volume_path
-   UPDATE "FileUpload"
-   SET volume_path = storagePath,
-       storage_type = 'volume'
-   WHERE storagePath IS NOT NULL;
-   ```
-
-2. **Volume Management Service**
-   ```typescript
-   // server/src/services/volume-storage.ts
-   class VolumeStorage {
-     async uploadToVolume(file: Buffer, path: string): Promise<string>
-     async readFromVolume(path: string): Promise<Buffer>
-     async deleteFromVolume(path: string): Promise<void>
-     async listVolumePath(path: string): Promise<string[]>
-   }
-   ```
-
-3. **Migration Strategy**
-   - New uploads go to Volumes by default
-   - Background job to migrate existing files
-   - Dual-read support during transition
-   - Cleanup database content after migration
-
-4. **File Organization in Volumes**
-   ```
-   /Volumes/main/project-files/
-   ├── projects/
-   │   ├── {project-id}/
-   │   │   ├── files/
-   │   │   │   ├── {file-id}-{filename}
-   │   │   │   └── metadata.json
-   │   │   └── exports/
-   │   └── shared/
-   │       └── templates/
-   └── user-files/
-       └── {user-id}/
-           └── {chat-id}/
-               └── {file-id}-{filename}
-   ```
-
-5. **Benefits**
-   - Reduced database size (80-90% reduction for file-heavy projects)
-   - Better performance for large files
-   - Direct file access for ML/data processing workflows
-   - Native integration with Databricks tools
-   - Cost-effective storage
-
-6. **Configuration**
-   ```yaml
-   # databricks.yml additions
-   resources:
-     volumes:
-       project_files:
-         name: project-files
-         catalog: main
-         schema: ${var.catalog_schema}
-         path: /Volumes/main/${var.catalog_schema}/project-files
-   ```
-
-### Phase 7: Advanced Project Features
+### Phase 6: Advanced Project Features
 - [ ] Project templates with predefined contexts
 - [ ] Project sharing and collaboration
 - [ ] Project archiving and export
 - [ ] Project activity history
 - [ ] Project-level settings (default model, parameters)
 
-### Phase 8: Enhanced Context Management
+### Phase 7: Enhanced Context Management
 - [ ] Context versioning
 - [ ] Context templates library
 - [ ] Dynamic context based on file types
 - [ ] Context validation and testing
 - [ ] Context performance metrics
 
-### Phase 9: Project Analytics
+### Phase 8: Project Analytics
 - [ ] Token usage per project
 - [ ] Cost tracking per project
 - [ ] Chat activity metrics
 - [ ] Project health dashboard
 - [ ] Usage reports and exports
 
-### Phase 10: Team Collaboration
+### Phase 9: Team Collaboration
 - [ ] Share projects with team members
 - [ ] Role-based access control (owner, editor, viewer)
 - [ ] Project comments and annotations
 - [ ] Collaborative editing of context
 - [ ] Activity feed
 
-### Phase 11: Enterprise Features
+### Phase 10: Enterprise Features
 - [ ] Project approval workflows
 - [ ] Compliance and audit logs
 - [ ] Data retention policies
@@ -274,62 +197,32 @@ Enable the AI model to use MCP (Model Context Protocol) tools for gathering rece
 7. **Project quick actions** - Common actions in project dropdown
 8. **Empty state improvements** - Better onboarding for new users
 
-## 📝 Notes
-
-### Migration to Databricks Volumes - Key Considerations
-
-1. **Backwards Compatibility**
-   - Maintain dual-storage support during transition
-   - Gradual migration with feature flags
-   - Rollback plan if issues arise
-
-2. **Security**
-   - Ensure proper access controls on Volumes
-   - Encrypt sensitive files at rest
-   - Audit file access patterns
-
-3. **Performance Testing**
-   - Benchmark Volume vs Database performance
-   - Test with various file sizes
-   - Monitor impact on chat latency
-
-4. **Cost Analysis**
-   - Compare storage costs (Database vs Volumes)
-   - Factor in data transfer costs
-   - Consider backup/replication costs
-
-5. **Developer Experience**
-   - Update local development setup
-   - Provide Volume emulation for testing
-   - Clear migration documentation
-
 ## 🎯 Priority Matrix
 
 ### High Priority (Do Next)
 1. Phase 4: Complete shared files & context
 2. Phase 5: MCP Tool Capabilities
-3. Phase 6: Databricks Volumes migration
-4. Project templates
+3. Project templates
 
 ### Medium Priority (Plan Soon)
-1. Phase 7: Advanced project features
-2. Phase 8: Enhanced context management
+1. Phase 6: Advanced project features
+2. Phase 7: Enhanced context management
 3. Performance optimizations
 
 ### Low Priority (Future)
-1. Phase 10: Team collaboration
-2. Phase 11: Enterprise features
+1. Phase 9: Team collaboration
+2. Phase 10: Enterprise features
 3. Cross-workspace sync
 
 ## 📅 Estimated Timeline
 
 - **Q1 2024**: Complete Phase 4, Implement Phase 5 (MCP Tools)
-- **Q2 2024**: Start Phase 6 (Volumes migration), Complete Phase 7
-- **Q3 2024**: Phase 8 & 9 (Context & Analytics)
-- **Q4 2024**: Phase 10 (Collaboration) + Performance improvements
-- **2025**: Phase 11 (Enterprise features) and scale optimizations
+- **Q2 2024**: Phase 6 (Advanced Project Features)
+- **Q3 2024**: Phase 7 & 8 (Context & Analytics)
+- **Q4 2024**: Phase 9 (Collaboration) + Performance improvements
+- **2025**: Phase 10 (Enterprise features) and scale optimizations
 
 ---
 
-*Last Updated: January 2024*
-*Version: 1.0.0*
+*Last Updated: February 2026*
+*Version: 1.1.0*
