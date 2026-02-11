@@ -567,6 +567,73 @@ Implement a custom `LanguageModelV2` that handles image conversion correctly bef
 
 ---
 
+### Attempt 10: Use Volume HTTP URLs Instead of Data URLs
+
+**Status:** IMPLEMENTED - TESTING NEEDED
+
+**Date:** 2026-02-05
+
+**Hypothesis:** The provider's `toHttpUrlString` function accepts HTTP/HTTPS URLs but rejects data URLs. Since images are now stored in UC Volumes, we can generate HTTP URLs to the Volume files instead of base64 data URLs.
+
+**Key Insight:**
+- `toHttpUrlString` at line 1714 of the provider: `if (data.startsWith("http://") || data.startsWith("https://")) return data;`
+- This means HTTP URLs pass through, only data URLs are rejected
+- The existing `transformImageContent` function in `databricksFetch` will fix the output format
+
+**Files Modified:**
+
+1. **`server/src/services/volume-storage.ts`** - Added `getHttpUrl()` method
+   ```typescript
+   getHttpUrl(volumePath: string): string {
+     const hostUrl = getDatabricksHostUrl();
+     const apiPath = volumePath.replace('/Volumes/', '');
+     return `${hostUrl}/api/2.0/fs/files/Volumes/${apiPath}`;
+   }
+   ```
+
+2. **`server/src/services/file-processor.ts`** - Updated `ProcessedFile` interface and `toContentParts()`
+   - Added `volumeUrl?: string` to `ProcessedFile` interface
+   - Modified `toContentParts()` to prefer HTTP URL over data URL:
+   ```typescript
+   if (file.volumeUrl) {
+     return [{
+       type: 'file',
+       data: file.volumeUrl,  // HTTP URL, not data URL
+       mediaType: file.contentType,
+     }];
+   }
+   ```
+
+3. **`server/src/routes/chat.ts`** - Changed file loading to use HTTP URLs
+   - Instead of downloading file and converting to base64
+   - Now generates HTTP URL using `volumeStorage.getHttpUrl()`
+   - Updated debug logging to show URL type (HTTP vs data)
+
+**Expected Flow:**
+```
+1. File uploaded → stored in Volume with volumePath
+2. chat.ts loads file → generates HTTP URL via getHttpUrl()
+3. FileProcessor.toContentParts() → returns {type: 'file', data: 'https://...'}
+4. Provider's toHttpUrlString() → accepts HTTP URL (returns it, not null)
+5. Provider outputs {type: 'image', image_url: 'https://...'}
+6. databricksFetch's transformImageContent() → fixes format to {type: 'image_url', image_url: {url}}
+7. Databricks FMAPI receives correct format with accessible URL
+```
+
+**Potential Issue:**
+The Foundation Model API server needs to be able to fetch the Volume HTTP URL. This requires:
+- The serving endpoint to have access to the Volume (internal workspace access)
+- Proper authentication when fetching the URL
+
+If the FMAPI server cannot access the Volume URL, the image will fail to load. In that case, consider:
+- Ensuring the serving endpoint has Volume permissions
+- Using a public proxy endpoint (security concern)
+- Falling back to making the patch work
+
+**Result:** Pending testing
+
+---
+
 ## Session Metadata
 
 - **Date:** 2026-02-04, 2026-02-05

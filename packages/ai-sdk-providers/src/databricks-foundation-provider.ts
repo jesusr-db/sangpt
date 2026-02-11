@@ -4,32 +4,6 @@ import { wrapLanguageModel, extractReasoningMiddleware } from 'ai';
 import { getDatabricksToken } from '@chat-template/auth';
 import { getHostUrl } from '@chat-template/utils';
 
-// Transform image content parts from SDK format to Databricks FMAPI format
-// SDK format: {type: "image", image_url: "data:..."}
-// Databricks format: {type: "image_url", image_url: {url: "data:..."}}
-function transformImageContent(body: any): any {
-  if (!body?.messages) return body;
-
-  const transformedMessages = body.messages.map((msg: any) => {
-    if (!msg.content || !Array.isArray(msg.content)) return msg;
-
-    const transformedContent = msg.content.map((part: any) => {
-      // Transform SDK image format to Databricks FMAPI format
-      if (part.type === 'image' && typeof part.image_url === 'string') {
-        return {
-          type: 'image_url',
-          image_url: { url: part.image_url },
-        };
-      }
-      return part;
-    });
-
-    return { ...msg, content: transformedContent };
-  });
-
-  return { ...body, messages: transformedMessages };
-}
-
 // List of available Foundation Models
 export const FOUNDATION_MODELS = [
   'databricks-dbrx-instruct',
@@ -198,8 +172,6 @@ async function getOrCreateFoundationProvider() {
       const headers = new Headers(init?.headers);
       headers.set('Authorization', `Bearer ${token}`);
 
-      // Transform request body to fix image format for vision models
-      let transformedInit = init;
       const url = input.toString();
 
       if (init?.body) {
@@ -207,58 +179,22 @@ async function getOrCreateFoundationProvider() {
           const requestBody =
             typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
 
-          // Transform image content to Databricks FMAPI format
-          const transformedBody = transformImageContent(requestBody);
-
-          // Detailed logging for debugging image/vision issues
-          const messagesSummary = transformedBody.messages?.map(
-            (msg: { role: string; content: unknown }) => {
-              if (typeof msg.content === 'string') {
-                return {
-                  role: msg.role,
-                  contentType: 'string',
-                  length: msg.content.length,
-                };
-              }
-              if (Array.isArray(msg.content)) {
-                return {
-                  role: msg.role,
-                  contentType: 'array',
-                  parts: msg.content.map(
-                    (part: { type: string; image_url?: unknown }) => ({
-                      type: part.type,
-                      hasImageUrl: !!part.image_url,
-                    }),
-                  ),
-                };
-              }
-              return { role: msg.role, contentType: typeof msg.content };
-            },
-          );
-
           console.log(
             '[Foundation] Request:',
             JSON.stringify({
               url,
               method: init.method || 'POST',
-              model: transformedBody.model,
-              messageCount: transformedBody.messages?.length,
-              messagesSummary,
+              model: requestBody.model,
+              messageCount: requestBody.messages?.length,
             }),
           );
-
-          // Update init with transformed body
-          transformedInit = {
-            ...init,
-            body: JSON.stringify(transformedBody),
-          };
         } catch (_e) {
           console.log('[Foundation] Request (raw):', { url, method: init.method });
         }
       }
 
       const response = await fetch(input, {
-        ...transformedInit,
+        ...init,
         headers,
       });
 

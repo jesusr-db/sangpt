@@ -47,6 +47,15 @@ import {
 } from '@databricks/ai-sdk-provider';
 import { ChatSDKError } from '@chat-template/core/errors';
 import { ProjectSessionMemory } from '../services/project-session-memory';
+import { tracingContextMiddleware } from '../middleware/tracing';
+import {
+  chatRequestCounter,
+  tokenUsageHistogram,
+  responseLatencyHistogram,
+  activeStreamsGauge,
+  errorCounter,
+} from '../metrics';
+import { logger } from '../logger';
 
 export const chatRouter: RouterType = Router();
 
@@ -56,6 +65,9 @@ const sessionMemory = ProjectSessionMemory.getInstance();
 // Apply auth middleware to all chat routes
 chatRouter.use(authMiddleware);
 
+// Apply tracing context middleware to inject user/session info into spans
+chatRouter.use(tracingContextMiddleware());
+
 /**
  * POST /api/chat - Send a message and get streaming response
  *
@@ -63,19 +75,23 @@ chatRouter.use(authMiddleware);
  * Streaming continues normally, but no chat/message persistence occurs.
  */
 chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
+  const requestStartTime = Date.now();
   const dbAvailable = isDatabaseAvailable();
   if (!dbAvailable) {
-    console.log('[Chat] Running in ephemeral mode - no persistence');
+    logger.info('Running in ephemeral mode - no persistence', { component: 'chat' });
   }
 
-  console.log(`CHAT POST REQUEST ${Date.now()}`);
+  logger.info('Chat request received', {
+    component: 'chat',
+    timestamp: Date.now(),
+  });
 
   let requestBody: PostRequestBody;
 
   try {
     requestBody = postRequestBodySchema.parse(req.body);
   } catch (_) {
-    console.error('Error parsing request body:', _);
+    logger.error('Error parsing request body', { component: 'chat', error: String(_) });
     const error = new ChatSDKError('bad_request:api');
     const response = error.toResponse();
     return res.status(response.status).json(response.json);
@@ -229,10 +245,12 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         sessionMemory.initializeChatWithProject(id, chat.projectId);
 
         // Fetch project context/instructions from database
-        const contexts = await getProjectContexts({ projectId: chat.projectId });
+        const contexts = await getProjectContexts({
+          projectId: chat.projectId,
+        });
         if (contexts.length > 0) {
           projectContext = contexts
-            .map(ctx => `[${ctx.contextType}]: ${ctx.content}`)
+            .map((ctx) => `[${ctx.contextType}]: ${ctx.content}`)
             .join('\n\n');
 
           // Add instructions to session memory
@@ -242,11 +260,13 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         }
 
         // Fetch project files from database
-        const projectFiles = await getProjectFiles({ projectId: chat.projectId });
+        const projectFiles = await getProjectFiles({
+          projectId: chat.projectId,
+        });
         if (projectFiles.length > 0) {
           // Filter by enabled file IDs if provided
           const enabledProjectFiles = enabledFileIds
-            ? projectFiles.filter(f => enabledFileIds.includes(f.id))
+            ? projectFiles.filter((f) => enabledFileIds.includes(f.id))
             : projectFiles;
 
           // Add enabled project files to project context in session memory
@@ -263,15 +283,22 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           }
 
           projectFileContext = enabledProjectFiles
-            .map(f => `- ${f.filename} (${f.contentType}, ${f.fileSize} bytes)`)
+            .map(
+              (f) => `- ${f.filename} (${f.contentType}, ${f.fileSize} bytes)`,
+            )
             .join('\n');
 
-          if (enabledFileIds && enabledProjectFiles.length < projectFiles.length) {
-            console.log(`[Chat] Filtered project files: ${enabledProjectFiles.length}/${projectFiles.length} enabled`);
+          if (
+            enabledFileIds &&
+            enabledProjectFiles.length < projectFiles.length
+          ) {
+            console.log(
+              `[Chat] Filtered project files: ${enabledProjectFiles.length}/${projectFiles.length} enabled`,
+            );
           }
         }
       } catch (error) {
-        console.warn('Failed to fetch project context:', error);
+        logger.warn('Failed to fetch project context', { component: 'chat', error: String(error) });
       }
     }
 
@@ -295,11 +322,11 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
 
         // Filter by enabled file IDs if provided
         const enabledDbFiles = enabledFileIds
-          ? dbFiles.filter(f => enabledFileIds.includes(f.id))
+          ? dbFiles.filter((f) => enabledFileIds.includes(f.id))
           : dbFiles;
 
         const sessionFiles = sessionMemory.getSessionFiles(id);
-        const sessionFileIds = new Set(sessionFiles.map(sf => sf.id));
+        const sessionFileIds = new Set(sessionFiles.map((sf) => sf.id));
 
         for (const dbFile of enabledDbFiles) {
           // Skip if already in session memory
@@ -316,15 +343,17 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         }
 
         if (enabledFileIds && enabledDbFiles.length < dbFiles.length) {
-          console.log(`[Chat] Filtered chat files: ${enabledDbFiles.length}/${dbFiles.length} enabled`);
+          console.log(
+            `[Chat] Filtered chat files: ${enabledDbFiles.length}/${dbFiles.length} enabled`,
+          );
         }
       } catch (err) {
-        console.warn('[Chat] Failed to load files from database:', err);
+        logger.warn('Failed to load files from database', { component: 'chat', error: String(err) });
       }
     }
 
     // Add file context for text-based files (includes both project files and chat-specific files)
-    console.log(`[Chat] Looking up files for chatId: ${id}`);
+    logger.debug('Looking up files for chat', { component: 'chat', chatId: id });
     const allFileContext = sessionMemory.getContextString(id);
     if (allFileContext || projectFileContext) {
       let fileMessage = 'You have access to the following files:\n\n';
@@ -337,7 +366,8 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
         fileMessage += `Chat Files:\n${allFileContext}`;
       }
 
-      fileMessage += '\n\nYou can reference these files by name when responding to user queries.';
+      fileMessage +=
+        '\n\nYou can reference these files by name when responding to user queries.';
 
       systemMessages.push({
         role: 'system',
@@ -350,14 +380,57 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       messagesForModel = [...systemMessages, ...messagesForModel];
     }
 
-    console.log(`[Chat] Sending ${messagesForModel.length} messages to model`);
+    logger.info('Sending messages to model', {
+      component: 'chat',
+      chatId: id,
+      model: selectedChatModel,
+      messageCount: messagesForModel.length,
+      userId: session.user.id,
+    });
+
+    // Track request metrics
+    chatRequestCounter.add(1, { model: selectedChatModel });
+    activeStreamsGauge.add(1, { model: selectedChatModel });
 
     const model = await myProvider.languageModel(selectedChatModel);
     const result = streamText({
       model,
       messages: messagesForModel,
+      experimental_telemetry: {
+        isEnabled: true,
+        functionId: 'chat-completion',
+        metadata: {
+          chatId: id,
+          userId: session.user.id,
+          model: selectedChatModel,
+        },
+      },
       onFinish: ({ usage }) => {
         finalUsage = usage;
+
+        // Track token usage metrics
+        if (usage) {
+          tokenUsageHistogram.record(usage.totalTokens, {
+            model: selectedChatModel,
+            type: 'total',
+          });
+          tokenUsageHistogram.record(usage.promptTokens, {
+            model: selectedChatModel,
+            type: 'prompt',
+          });
+          tokenUsageHistogram.record(usage.completionTokens, {
+            model: selectedChatModel,
+            type: 'completion',
+          });
+        }
+
+        // Track response latency
+        responseLatencyHistogram.record(Date.now() - requestStartTime, {
+          model: selectedChatModel,
+        });
+
+        // Decrement active streams
+        activeStreamsGauge.add(-1, { model: selectedChatModel });
       },
       tools: {
         [DATABRICKS_TOOL_CALL_ID]: DATABRICKS_TOOL_DEFINITION,
@@ -377,7 +450,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
             sendReasoning: true,
             sendSources: true,
             onError: (error) => {
-              console.error('Stream error:', error);
+              logger.error('Stream error', { component: 'chat', chatId: id, error: String(error) });
 
               const errorMessage =
                 error instanceof Error ? error.message : JSON.stringify(error);
@@ -414,9 +487,23 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
               context: finalUsage,
             });
           } catch (err) {
-            console.warn('Unable to persist last usage for chat', id, err);
+            logger.warn('Unable to persist last usage for chat', {
+              component: 'chat',
+              chatId: id,
+              error: String(err),
+            });
           }
         }
+
+        // Log successful completion
+        logger.info('Chat response completed', {
+          component: 'chat',
+          chatId: id,
+          totalTokens: finalUsage?.totalTokens,
+          promptTokens: finalUsage?.promptTokens,
+          completionTokens: finalUsage?.completionTokens,
+          durationMs: Date.now() - requestStartTime,
+        });
 
         streamCache.clearActiveStream(id);
       },
@@ -434,12 +521,27 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
+    // Track error metrics
+    errorCounter.add(1, {
+      type: error instanceof ChatSDKError ? error.type : 'unknown',
+      route: 'chat',
+    });
+
+    // Ensure we decrement active streams on error
+    activeStreamsGauge.add(-1, {
+      model: requestBody?.selectedChatModel || 'unknown',
+    });
+
     if (error instanceof ChatSDKError) {
       const response = error.toResponse();
       return res.status(response.status).json(response.json);
     }
 
-    console.error('Unhandled error in chat API:', error);
+    logger.error('Unhandled error in chat API', {
+      component: 'chat',
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
 
     const chatError = new ChatSDKError('offline:chat');
     const response = chatError.toResponse();
@@ -605,6 +707,10 @@ async function generateTitleFromUserMessage({
     - the title should be a summary of the user's message
     - do not use quotes or colons. do not include other expository content ("I'll help...")`,
     prompt: JSON.stringify(message),
+    experimental_telemetry: {
+      isEnabled: true,
+      functionId: 'generate-title',
+    },
   });
 
   return title;

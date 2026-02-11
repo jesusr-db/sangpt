@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useRef } from 'react';
-import { Upload, X, File, FileText, Image, Loader2 } from 'lucide-react';
+import { Upload, X, File, FileText, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -31,9 +31,6 @@ const ALLOWED_EXTENSIONS = [
   '.tsx',
   '.json',
   '.csv',
-  '.jpg',
-  '.jpeg',
-  '.png',
   '.pdf',
   '.docx',
 ];
@@ -134,9 +131,6 @@ export function FileUploadArea({
 
   const _getFileIcon = (filename: string) => {
     const ext = filename.split('.').pop()?.toLowerCase();
-    if (['jpg', 'jpeg', 'png'].includes(ext || '')) {
-      return <Image className="h-4 w-4" />;
-    }
     if (['pdf', 'docx'].includes(ext || '')) {
       return <FileText className="h-4 w-4" />;
     }
@@ -213,9 +207,6 @@ export function FileChip({
 }) {
   const getFileIcon = (filename: string) => {
     const ext = filename.split('.').pop()?.toLowerCase();
-    if (['jpg', 'jpeg', 'png'].includes(ext || '')) {
-      return <Image className="h-3 w-3" />;
-    }
     if (['pdf', 'docx'].includes(ext || '')) {
       return <FileText className="h-3 w-3" />;
     }

@@ -298,6 +298,22 @@ export class DatabricksVolumeStorage {
   getConfig(): VolumeConfig {
     return { ...this.config };
   }
+
+  /**
+   * Generate an HTTP URL for accessing a file in the Volume via the Files API.
+   * This URL can be used by vision models to fetch images directly.
+   *
+   * Format: https://{host}/api/2.0/fs/files/Volumes/{catalog}/{schema}/{volume}/{path}
+   *
+   * Note: The caller (e.g., FMAPI serving endpoint) needs to have access to this URL.
+   * Within the same Databricks workspace, serving endpoints typically have internal access.
+   */
+  getHttpUrl(volumePath: string): string {
+    const hostUrl = getDatabricksHostUrl();
+    // The Files API path starts after /Volumes/
+    const apiPath = volumePath.replace('/Volumes/', '');
+    return `${hostUrl}/api/2.0/fs/files/Volumes/${apiPath}`;
+  }
 }
 
 /**

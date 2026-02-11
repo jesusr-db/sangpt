@@ -23,6 +23,21 @@ variables:
   volume_name:
     description: "Volume name for file storage"
     default: "chatbot-files"
+  # OTEL Tracing Configuration (Optional)
+  # Note: DATABRICKS_HOST is auto-provided by Databricks Apps runtime
+  otel_uc_table_spans:
+    description: "Unity Catalog table for trace spans"
+    default: "jmr_demo.zerobus.otel_spans"
+  otel_uc_table_metrics:
+    description: "Unity Catalog table for metrics"
+    default: "jmr_demo.zerobus.otel_metrics"
+  otel_uc_table_logs:
+    description: "Unity Catalog table for logs"
+    default: "jmr_demo.zerobus.otel_logs"
+  api_token:
+    description: "token for OTEL zerobus ingest"
+    default: ""
+
 
 resources:
   database_instances:
@@ -58,6 +73,21 @@ resources:
             value: ${var.volume_name}-${var.resource_name_suffix}
           - name: DATABRICKS_SERVING_ENDPOINT
             value: ${var.serving_endpoint_name}
+          # OTEL Tracing Configuration
+          # DATABRICKS_HOST is auto-provided by Databricks Apps runtime
+          - name: OTEL_SERVICE_NAME
+            value: db-chatbot-${var.resource_name_suffix}
+          - name: DATABRICKS_UC_TABLE_SPANS
+            value: ${var.otel_uc_table_spans}
+          - name: DATABRICKS_UC_TABLE_METRICS
+            value: ${var.otel_uc_table_metrics}
+          - name: DATABRICKS_UC_TABLE_LOGS
+            value: ${var.otel_uc_table_logs}
+          - name: DATABRICKS_API_TOKEN
+            value_from: anthropic_secret
+          - name: OTEL_VERBOSE
+            value: "true"
+
       resources:
         - name: serving-endpoint
           description: "Databricks serving endpoint name for the AI agent"
@@ -76,6 +106,12 @@ resources:
             securable_full_name: ${var.volume_catalog}.${var.volume_schema}.${var.volume_name}-${var.resource_name_suffix}
             securable_type: VOLUME
             permission: WRITE_VOLUME
+        - name: anthropic_secret
+          description: "Anthropic API authentication token"
+          secret:
+            scope: jmr_demo
+            key: ANTHROPIC_AUTH_TOKEN
+            permission: READ
 
 targets:
   dev:

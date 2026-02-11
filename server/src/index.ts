@@ -1,4 +1,8 @@
-// Load environment variables FIRST before any other imports
+// Initialize OTEL tracing FIRST - before any other imports
+// This enables auto-instrumentation of Express, HTTP, PostgreSQL, etc.
+import './tracing';
+
+// Load environment variables
 import './env';
 
 import express, {
@@ -18,6 +22,7 @@ import { messagesRouter } from './routes/messages';
 import { configRouter } from './routes/config';
 import { filesRouter } from './routes/files';
 import { projectsRouter } from './routes/projects';
+import { tracesRouter } from './routes/traces';
 import { ChatSDKError } from '@chat-template/core/errors';
 
 // ESM-compatible __dirname
@@ -45,6 +50,9 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Raw body parser for traces endpoint (protobuf data)
+app.use('/api/traces', express.raw({ type: 'application/x-protobuf' }));
+
 // Health check endpoint (for Playwright tests)
 app.get('/ping', (_req, res) => {
   res.status(200).send('pong');
@@ -58,6 +66,7 @@ app.use('/api/messages', messagesRouter);
 app.use('/api/config', configRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/projects', projectsRouter);
+app.use('/api/traces', tracesRouter);
 
 // Serve static files in production
 if (!isDevelopment) {
