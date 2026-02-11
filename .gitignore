@@ -1,6 +1,11 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 cookies.txt
+
+# build artifacts
+client/dist/
+server/dist/
+
 # dependencies
 node_modules
 .pnp

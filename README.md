@@ -45,6 +45,23 @@ but has some [known limitations](#known-limitations) for other use cases. Work i
 
 This project includes a [Databricks Asset Bundle (DAB)](https://docs.databricks.com/aws/en/dev-tools/bundles/apps-tutorial) configuration that simplifies deployment by automatically creating and managing all required resources.
 
+### Build, Deploy, and Run
+
+**Important:** Build artifacts are not committed to git. You must build locally before deploying.
+
+```bash
+# 1. Build the application (creates client/dist/ and server/dist/)
+npm run build
+
+# 2. Deploy the bundle to Databricks (syncs built artifacts)
+databricks bundle deploy
+
+# 3. Run the application
+databricks bundle run databricks_chatbot
+```
+
+### Detailed Setup
+
 1. **Clone the repo**:
    ```bash
    git clone https://github.com/databricks/app-templates
