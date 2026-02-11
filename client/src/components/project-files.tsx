@@ -306,7 +306,7 @@ export function ProjectFiles({ projectId }: ProjectFilesProps) {
       </div>
 
       {/* Info */}
-      <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+      <div className='rounded-lg bg-muted/50 p-3 text-muted-foreground text-xs'>
         <p className="font-medium">How project files work:</p>
         <ul className="mt-1 list-inside list-disc space-y-1">
           <li>Files uploaded here are shared across all chats in this project</li>

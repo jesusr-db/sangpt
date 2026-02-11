@@ -1,0 +1,23 @@
+command: ["opentelemetry-instrument", "npm", "run", "start"]
+runtime: nodejs20
+
+env:
+  - name: DATABRICKS_SERVING_ENDPOINT
+    valueFrom: serving-endpoint
+  - name: VOLUME_CATALOG
+    value: "jmr_demo"
+  - name: VOLUME_SCHEMA
+    value: "default"
+  - name: VOLUME_NAME
+    value: "chatbot-files-dev-jesus-rodriguez"
+  # OTEL Tracing Configuration (Optional - leave empty to disable)
+  - name: OTEL_SERVICE_NAME
+    value: "databricks-chatbot"
+  - name: DATABRICKS_OTEL_ENDPOINT
+    value: "https://fe-vm-vdm-classic-rikfy0.cloud.databricks.com/api/2.0/otel"
+  - name: DATABRICKS_API_TOKEN
+    value_from: anthropic_secret
+  - name: DATABRICKS_UC_TABLE_SPANS
+    value: "jmr_demo.zerobus.otel_spans"
+  - name: DATABRICKS_UC_TABLE_METRICS
+    value: "jmr_demo.zerobus.otel_metrics"
